@@ -190,3 +190,55 @@ class NoteTemplate(BaseModel):
         default="ai",
         description="Template source"
     )
+
+
+# =============================================================================
+# Backlink Analysis Schemas
+# =============================================================================
+
+class BacklinkSuggestion(BaseModel):
+    """Suggested backlink location in an existing note."""
+    
+    id: str = Field(
+        ...,
+        description="Unique identifier for this suggestion"
+    )
+    source_note_path: str = Field(
+        ...,
+        description="Path to the existing note"
+    )
+    source_note_title: str = Field(
+        ...,
+        description="Title of the existing note"
+    )
+    target_note_title: str = Field(
+        ...,
+        description="Title of the new note to link to"
+    )
+    context_before: str = Field(
+        default="",
+        description="Text context before the link insertion point"
+    )
+    context_after: str = Field(
+        default="",
+        description="Text context after the link insertion point"
+    )
+    matched_text: str = Field(
+        ...,
+        description="Text that matches the new note's concepts"
+    )
+    line_number: int = Field(
+        ...,
+        description="Line number for link insertion"
+    )
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score for this suggestion"
+    )
+    reason: str = Field(
+        default="",
+        description="Reason for suggesting this backlink"
+    )
+

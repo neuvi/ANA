@@ -12,7 +12,7 @@ from src.embedding_cache import EmbeddingCache
 from src.graph import build_graph, continue_with_answers, create_initial_state
 from src.link_analyzer import LinkAnalyzer
 from src.llm_config import get_llm
-from src.schemas import AgentResponse, AgentState, AnalysisResult, DraftNote, InteractionPayload
+from src.schemas import AgentResponse, AgentState, AnalysisResult, BacklinkSuggestion, DraftNote, InteractionPayload
 from src.template_manager import TemplateManager
 from src.utils import save_note_to_file
 from src.vault_scanner import VaultScanner
@@ -57,6 +57,8 @@ class AtomicNoteArchitect:
             vault_path=self.config.get_vault_path(),
             ollama_base_url=self.config.ollama_base_url,
             embedding_model=self.config.embedding_model,
+            batch_size=self.config.embedding_batch_size,
+            use_vector_db=self.config.use_vector_db,
         )
         self.link_analyzer = LinkAnalyzer(
             vault_scanner=self.vault_scanner,
@@ -77,6 +79,15 @@ class AtomicNoteArchitect:
         self._current_category: str = "general"
         self._current_template: str = ""
         self._template_source: str = "default"
+        
+        # Initialize backlink analyzer
+        from src.backlink_analyzer import BacklinkAnalyzer
+        self.backlink_analyzer = BacklinkAnalyzer(
+            vault_scanner=self.vault_scanner,
+            llm=self.llm,
+            auto_apply=True,
+            min_confidence=0.6,
+        )
     
     def process(self, raw_note: str, frontmatter: dict[str, Any] | None = None) -> AgentResponse:
         """Process a raw note through the pipeline.
@@ -182,6 +193,37 @@ class AtomicNoteArchitect:
             output_dir,
             overwrite=overwrite
         )
+    
+    def save_note_with_backlinks(
+        self,
+        note: DraftNote | None = None,
+        output_dir: Path | str | None = None,
+        overwrite: bool = False
+    ) -> tuple[Path, list[BacklinkSuggestion], list[Path]]:
+        """Save the note and automatically add backlinks to existing notes.
+        
+        Args:
+            note: Note to save. Uses current draft if not provided.
+            output_dir: Directory to save to. Uses vault path if not provided.
+            overwrite: Whether to overwrite existing file
+            
+        Returns:
+            Tuple of (saved_path, backlink_suggestions, modified_files)
+        """
+        # Save the note first
+        saved_path = self.save_note(note, output_dir, overwrite)
+        
+        # Get the note for backlink analysis
+        if note is None:
+            note = self._current_state.get("final_note")
+        
+        if note is None:
+            return saved_path, [], []
+        
+        # Find and apply backlinks
+        suggestions, modified_files = self.backlink_analyzer.analyze_and_apply(note)
+        
+        return saved_path, suggestions, modified_files
     
     def extract_for_split(
         self,
@@ -347,7 +389,9 @@ class AtomicNoteArchitect:
                     final_note.frontmatter["related"] = final_note.related_notes
                     
                 except Exception as e:
-                    pass  # Don't fail on linking errors
+                    from src.logging_config import get_logger
+                    logger = get_logger("agent")
+                    logger.warning(f"Note linking failed: {e}")
         else:
             status = "needs_info"
         

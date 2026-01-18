@@ -140,6 +140,28 @@ class ANAConfig(BaseSettings):
         description="Enable automatic note linking"
     )
     
+    # =========================================================================
+    # Language Settings
+    # =========================================================================
+    output_language: str = Field(
+        default="ko",
+        description="Output language code (ko, en, ja)"
+    )
+    
+    # =========================================================================
+    # Embedding Cache Settings
+    # =========================================================================
+    embedding_batch_size: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Batch size for embedding processing"
+    )
+    use_vector_db: bool = Field(
+        default=False,
+        description="Enable Chroma vector DB backend"
+    )
+    
     def get_vault_path(self) -> Path:
         """Get expanded vault path."""
         return self.vault_path.expanduser().resolve()

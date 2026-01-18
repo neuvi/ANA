@@ -186,12 +186,31 @@ def _process_note(
     if response.status == "completed":
         if no_interactive or Confirm.ask("Save this note?", default=True):
             try:
-                saved_path = agent.save_note()
+                saved_path, backlink_suggestions, modified_files = agent.save_note_with_backlinks()
                 print_success(f"Note saved to: {saved_path}")
+                
+                # Show backlink results
+                if modified_files:
+                    console.print()
+                    console.print(Panel(
+                        f"[bold green]🔗 Backlinks Added[/bold green]\n\n"
+                        f"Found {len(backlink_suggestions)} potential backlinks\n"
+                        f"Updated {len(modified_files)} existing notes:",
+                        border_style="green"
+                    ))
+                    for f in modified_files[:5]:
+                        console.print(f"  • {f.name}")
+                    if len(modified_files) > 5:
+                        console.print(f"  ... and {len(modified_files) - 5} more")
+                elif backlink_suggestions:
+                    console.print(f"[dim]Found {len(backlink_suggestions)} potential backlinks (below confidence threshold)[/dim]")
+                    
             except FileExistsError:
                 if Confirm.ask("File already exists. Overwrite?", default=False):
-                    saved_path = agent.save_note(overwrite=True)
+                    saved_path, _, modified_files = agent.save_note_with_backlinks(overwrite=True)
                     print_success(f"Note saved to: {saved_path}")
+                    if modified_files:
+                        console.print(f"[green]Updated {len(modified_files)} existing notes with backlinks[/green]")
                 else:
                     print_info("Note not saved")
     else:
@@ -291,11 +310,13 @@ def _process_single_split_note(
     if response.status == "completed":
         if no_interactive or Confirm.ask("Save this note?", default=True):
             try:
-                saved_path = agent.save_note()
+                saved_path, _, modified_files = agent.save_note_with_backlinks()
                 print_success(f"Note saved to: {saved_path}")
+                if modified_files:
+                    console.print(f"[green]Updated {len(modified_files)} notes with backlinks[/green]")
             except FileExistsError:
                 if Confirm.ask("File already exists. Overwrite?", default=False):
-                    saved_path = agent.save_note(overwrite=True)
+                    saved_path, _, _ = agent.save_note_with_backlinks(overwrite=True)
                     print_success(f"Note saved to: {saved_path}")
                 else:
                     print_info("Note not saved")

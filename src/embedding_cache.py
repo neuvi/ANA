@@ -19,6 +19,12 @@ class EmbeddingCache:
     Stores embeddings in vault/.ana/ directory:
     - embeddings.json: Actual embedding vectors
     - embeddings_meta.json: File hashes for change detection
+    
+    Features:
+    - Hash-based change detection for incremental updates
+    - Batch embedding processing for efficiency
+    - Deferred save to reduce I/O operations
+    - Optional vector DB backend (Chroma)
     """
     
     def __init__(
@@ -26,6 +32,8 @@ class EmbeddingCache:
         vault_path: Path,
         ollama_base_url: str = "http://localhost:11434",
         embedding_model: str = "nomic-embed-text",
+        batch_size: int = 10,
+        use_vector_db: bool = False,
     ):
         """Initialize embedding cache.
         
@@ -33,6 +41,8 @@ class EmbeddingCache:
             vault_path: Path to Obsidian vault
             ollama_base_url: Ollama API base URL
             embedding_model: Model name for embeddings
+            batch_size: Number of items per batch for batch processing
+            use_vector_db: Enable vector DB backend (Chroma)
         """
         self.vault_path = Path(vault_path)
         self.cache_dir = self.vault_path / ".ana"
@@ -41,10 +51,21 @@ class EmbeddingCache:
         
         self.ollama_base_url = ollama_base_url
         self.embedding_model = embedding_model
+        self.batch_size = batch_size
+        self.use_vector_db = use_vector_db
         
         # In-memory cache
         self._embeddings: dict[str, list[float]] = {}
         self._meta: dict[str, dict[str, Any]] = {}
+        
+        # Deferred save tracking
+        self._dirty = False
+        self._pending_count = 0
+        
+        # Vector DB backend (optional)
+        self._vector_db = None
+        if use_vector_db:
+            self._init_vector_db()
         
         # Load existing cache
         self._load_cache()
@@ -86,6 +107,9 @@ class EmbeddingCache:
         embedding = self._create_embedding(content)
         if embedding:
             self._save_embedding(rel_path, embedding, file_hash)
+            # Add to vector DB if enabled
+            if self._vector_db is not None:
+                self._add_to_vector_db(rel_path, embedding, content)
         
         return embedding
     
@@ -172,7 +196,70 @@ class EmbeddingCache:
             except Exception:
                 stats["failed"] += 1
         
+        # Commit all pending changes after sync
+        self.commit()
+        
         return stats
+    
+    def batch_create_embeddings(
+        self,
+        items: list[tuple[Path, str]],
+        progress_callback=None
+    ) -> dict[str, list[float]]:
+        """Create embeddings in batches for efficiency.
+        
+        Args:
+            items: List of (file_path, content) tuples
+            progress_callback: Optional callback(current, total, file_name)
+            
+        Returns:
+            Dict of path -> embedding
+        """
+        results = {}
+        total = len(items)
+        
+        for i in range(0, total, self.batch_size):
+            batch = items[i:i + self.batch_size]
+            
+            for j, (file_path, content) in enumerate(batch):
+                current = i + j + 1
+                if progress_callback:
+                    progress_callback(current, total, file_path.name)
+                
+                file_hash = self._compute_hash(content)
+                rel_path = self._get_relative_path(file_path)
+                
+                # Check if update needed
+                if rel_path in self._meta and self._meta[rel_path].get("hash") == file_hash:
+                    embed_key = self._meta[rel_path].get("embedding_key")
+                    if embed_key and embed_key in self._embeddings:
+                        results[rel_path] = self._embeddings[embed_key]
+                        continue
+                
+                # Create new embedding
+                embedding = self._create_embedding(content)
+                if embedding:
+                    self._save_embedding(rel_path, embedding, file_hash)
+                    results[rel_path] = embedding
+                    
+                    # Add to vector DB if enabled
+                    if self._vector_db is not None:
+                        self._add_to_vector_db(rel_path, embedding, content)
+            
+            # Commit after each batch
+            self.commit()
+        
+        return results
+    
+    def commit(self):
+        """Persist pending changes to disk.
+        
+        Call this after batch operations to save changes.
+        """
+        if self._dirty:
+            self._save_cache()
+            self._dirty = False
+            self._pending_count = 0
     
     def get_all_embeddings(self) -> dict[str, list[float]]:
         """Get all cached embeddings.
@@ -199,12 +286,40 @@ class EmbeddingCache:
         Returns:
             Dict with cache stats
         """
+        embedding_dim = 0
+        if self._embeddings:
+            first_key = next(iter(self._embeddings))
+            embedding_dim = len(self._embeddings[first_key])
+        
         return {
             "total_files": len(self._meta),
             "total_embeddings": len(self._embeddings),
+            "embedding_dimension": embedding_dim,
+            "cache_size_bytes": self._get_cache_size(),
+            "cache_size_human": self._format_size(self._get_cache_size()),
             "cache_dir": str(self.cache_dir),
             "embedding_model": self.embedding_model,
+            "batch_size": self.batch_size,
+            "vector_db_enabled": self.use_vector_db,
+            "pending_changes": self._pending_count,
         }
+    
+    def _get_cache_size(self) -> int:
+        """Get total cache size in bytes."""
+        size = 0
+        if self.embeddings_file.exists():
+            size += self.embeddings_file.stat().st_size
+        if self.meta_file.exists():
+            size += self.meta_file.stat().st_size
+        return size
+    
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size in human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} TB"
     
     # =========================================================================
     # Private Methods
@@ -250,7 +365,7 @@ class EmbeddingCache:
         embedding: list[float],
         file_hash: str
     ):
-        """Save embedding to cache."""
+        """Save embedding to cache (deferred)."""
         # Generate unique key
         embed_key = f"embed_{hashlib.md5(rel_path.encode()).hexdigest()[:12]}"
         
@@ -262,8 +377,13 @@ class EmbeddingCache:
             "embedding_key": embed_key,
         }
         
-        # Persist to disk
-        self._save_cache()
+        # Mark as dirty (deferred save)
+        self._dirty = True
+        self._pending_count += 1
+        
+        # Auto-commit if pending count exceeds batch size
+        if self._pending_count >= self.batch_size:
+            self.commit()
     
     def _load_cache(self):
         """Load cache from disk."""
@@ -286,10 +406,10 @@ class EmbeddingCache:
                 self._meta = {}
     
     def _save_cache(self):
-        """Save cache to disk."""
+        """Save cache to disk (JSON + optionally vector DB)."""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save embeddings
+        # Always save to JSON (primary storage)
         try:
             with open(self.embeddings_file, "w", encoding="utf-8") as f:
                 json.dump(self._embeddings, f)
@@ -302,3 +422,134 @@ class EmbeddingCache:
                 json.dump(self._meta, f, indent=2, ensure_ascii=False)
         except Exception:
             pass
+    
+    # =========================================================================
+    # Vector DB Methods (Optional Chroma Backend)
+    # =========================================================================
+    
+    def _init_vector_db(self):
+        """Initialize Chroma vector DB."""
+        try:
+            import chromadb
+            from chromadb.config import Settings
+            
+            db_path = self.cache_dir / "chroma_db"
+            db_path.mkdir(parents=True, exist_ok=True)
+            
+            self._chroma_client = chromadb.Client(Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory=str(db_path),
+                anonymized_telemetry=False
+            ))
+            
+            self._vector_db = self._chroma_client.get_or_create_collection(
+                name="ana_embeddings",
+                metadata={"hnsw:space": "cosine"}
+            )
+            
+        except ImportError:
+            # Chroma not installed, disable vector DB
+            self._vector_db = None
+            self.use_vector_db = False
+        except Exception:
+            self._vector_db = None
+            self.use_vector_db = False
+    
+    def _add_to_vector_db(
+        self,
+        rel_path: str,
+        embedding: list[float],
+        content: str
+    ):
+        """Add embedding to vector DB."""
+        if self._vector_db is None:
+            return
+        
+        try:
+            doc_id = hashlib.md5(rel_path.encode()).hexdigest()
+            
+            # Upsert to avoid duplicates
+            self._vector_db.upsert(
+                ids=[doc_id],
+                embeddings=[embedding],
+                documents=[content[:1000]],  # Truncate for metadata
+                metadatas=[{"path": rel_path}]
+            )
+        except Exception:
+            pass
+    
+    def search_similar_in_vector_db(
+        self,
+        query_embedding: list[float],
+        n_results: int = 10
+    ) -> list[tuple[str, float]]:
+        """Search similar documents in vector DB.
+        
+        Args:
+            query_embedding: Query embedding vector
+            n_results: Number of results to return
+            
+        Returns:
+            List of (path, distance) tuples
+        """
+        if self._vector_db is None:
+            return []
+        
+        try:
+            results = self._vector_db.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results
+            )
+            
+            output = []
+            if results and results.get("metadatas"):
+                for i, meta in enumerate(results["metadatas"][0]):
+                    path = meta.get("path", "")
+                    distance = results["distances"][0][i] if results.get("distances") else 0
+                    output.append((path, 1 - distance))  # Convert distance to similarity
+            
+            return output
+        except Exception:
+            return []
+    
+    def rebuild_vector_db(self, vault_scanner, progress_callback=None) -> int:
+        """Rebuild vector DB from JSON cache.
+        
+        Args:
+            vault_scanner: VaultScanner instance
+            progress_callback: Optional callback(current, total, message)
+            
+        Returns:
+            Number of embeddings added
+        """
+        if self._vector_db is None:
+            if self.use_vector_db:
+                self._init_vector_db()
+            if self._vector_db is None:
+                return 0
+        
+        count = 0
+        total = len(self._meta)
+        
+        for i, (rel_path, meta) in enumerate(self._meta.items()):
+            if progress_callback:
+                progress_callback(i + 1, total, f"Rebuilding: {rel_path}")
+            
+            embed_key = meta.get("embedding_key")
+            if embed_key and embed_key in self._embeddings:
+                embedding = self._embeddings[embed_key]
+                
+                # Get content from vault
+                file_path = self.vault_path / rel_path
+                content = ""
+                if file_path.exists():
+                    try:
+                        content = file_path.read_text(encoding="utf-8")
+                    except Exception:
+                        pass
+                
+                self._add_to_vector_db(rel_path, embedding, content)
+                count += 1
+        
+        return count
+

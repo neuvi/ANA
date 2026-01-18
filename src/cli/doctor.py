@@ -56,6 +56,15 @@ def run_doctor(fix: bool = False, debug: bool = False) -> None:
     results.append(check_ollama())
     results.append(check_embedding_model())
     
+    # New checks
+    results.append(check_config_values())
+    results.append(check_reranker())
+    
+    # Debug-only checks (slow)
+    if debug:
+        console.print("[dim]🔍 Debug 모드: LLM 연결 테스트 실행 중...[/dim]")
+        results.append(check_llm_connection())
+    
     # Display results
     table = Table(show_header=True, header_style="bold")
     table.add_column("상태", width=4)
@@ -101,6 +110,9 @@ def run_doctor(fix: bool = False, debug: bool = False) -> None:
         ))
     elif errors:
         console.print("[dim]문제를 해결한 후 다시 ana doctor를 실행하세요.[/dim]")
+    
+    if not debug:
+        console.print("[dim]LLM 연결 테스트: ana doctor --debug[/dim]")
 
 
 def check_python_version() -> DiagnosticResult:
@@ -429,3 +441,160 @@ def check_embedding_model() -> DiagnosticResult:
             "warning",
             f"확인 불가: {e}"
         )
+
+
+def check_config_values() -> DiagnosticResult:
+    """Validate configuration values."""
+    try:
+        from src.config import ANAConfig
+        config = ANAConfig()
+        
+        issues = []
+        
+        # Check numeric ranges
+        if config.max_questions < 1 or config.max_questions > 10:
+            issues.append(f"max_questions={config.max_questions} (1-10 권장)")
+        
+        if config.max_iterations < 1 or config.max_iterations > 5:
+            issues.append(f"max_iterations={config.max_iterations} (1-5 권장)")
+        
+        if config.max_related_links < 1 or config.max_related_links > 10:
+            issues.append(f"max_related_links={config.max_related_links} (1-10 권장)")
+        
+        # Check temperature
+        if config.llm_temperature < 0 or config.llm_temperature > 2:
+            issues.append(f"llm_temperature={config.llm_temperature} (0-2 범위)")
+        
+        # Check language
+        valid_langs = ["ko", "en", "ja", "zh"]
+        if config.output_language not in valid_langs:
+            issues.append(f"output_language={config.output_language}")
+        
+        # Check batch size
+        if config.embedding_batch_size < 1 or config.embedding_batch_size > 100:
+            issues.append(f"embedding_batch_size={config.embedding_batch_size} (1-100 범위)")
+        
+        if not issues:
+            return DiagnosticResult(
+                "설정 값 유효성",
+                "ok",
+                "모든 설정 값 정상"
+            )
+        else:
+            return DiagnosticResult(
+                "설정 값 유효성",
+                "warning",
+                f"{len(issues)}개 주의 필요",
+                fix_hint="; ".join(issues[:3])  # Limit hint length
+            )
+    except Exception as e:
+        return DiagnosticResult(
+            "설정 값 유효성",
+            "warning",
+            f"확인 불가: {e}"
+        )
+
+
+def check_reranker() -> DiagnosticResult:
+    """Check reranker model availability."""
+    try:
+        from src.config import ANAConfig
+        config = ANAConfig()
+        
+        if not config.rerank_enabled:
+            return DiagnosticResult(
+                "Reranker 모델",
+                "ok",
+                "비활성화됨"
+            )
+        
+        model_name = config.rerank_model
+        
+        try:
+            from sentence_transformers import CrossEncoder
+            
+            # Check if model is already downloaded (don't download here)
+            import os
+            from pathlib import Path
+            
+            # Check common cache locations
+            cache_dirs = [
+                Path.home() / ".cache" / "huggingface" / "hub",
+                Path.home() / ".cache" / "torch" / "sentence_transformers",
+            ]
+            
+            model_folder = model_name.replace("/", "_")
+            model_found = False
+            
+            for cache_dir in cache_dirs:
+                if cache_dir.exists():
+                    for item in cache_dir.iterdir():
+                        if model_folder in str(item) or model_name.split("/")[-1] in str(item):
+                            model_found = True
+                            break
+            
+            if model_found:
+                return DiagnosticResult(
+                    "Reranker 모델",
+                    "ok",
+                    f"{model_name.split('/')[-1]} 설치됨"
+                )
+            else:
+                return DiagnosticResult(
+                    "Reranker 모델",
+                    "warning",
+                    f"{model_name.split('/')[-1]} 미설치",
+                    fix_hint="첫 실행 시 자동 다운로드됨"
+                )
+                
+        except ImportError:
+            return DiagnosticResult(
+                "Reranker 모델",
+                "warning",
+                "sentence-transformers 미설치",
+                fix_hint="pip install sentence-transformers"
+            )
+            
+    except Exception as e:
+        return DiagnosticResult(
+            "Reranker 모델",
+            "warning",
+            f"확인 불가: {e}"
+        )
+
+
+def check_llm_connection() -> DiagnosticResult:
+    """Test actual LLM connection with a simple prompt."""
+    try:
+        from src.config import ANAConfig
+        from src.llm_config import get_llm
+        
+        config = ANAConfig()
+        llm = get_llm(config)
+        
+        # Simple test prompt
+        response = llm.invoke("Say 'OK' if you can hear me. Reply with only 'OK'.")
+        
+        if response and hasattr(response, 'content'):
+            content = response.content.strip()[:20]
+            return DiagnosticResult(
+                "LLM 연결 테스트",
+                "ok",
+                f"{config.llm_provider} 응답: '{content}'"
+            )
+        else:
+            return DiagnosticResult(
+                "LLM 연결 테스트",
+                "error",
+                "응답 없음",
+                fix_hint="API 키와 설정 확인"
+            )
+    except Exception as e:
+        error_msg = str(e)[:50]
+        return DiagnosticResult(
+            "LLM 연결 테스트",
+            "error",
+            f"연결 실패: {error_msg}",
+            fix_hint="API 키, 네트워크, 서버 상태 확인"
+        )
+

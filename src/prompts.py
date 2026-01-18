@@ -4,10 +4,37 @@ Contains all system prompts and prompt templates for the 3-phase pipeline.
 """
 
 # =============================================================================
-# System Prompt
+# Language Rules
 # =============================================================================
 
-SYSTEM_PROMPT = """You are a strict and insightful 'Knowledge Architect'.
+LANGUAGE_RULES = {
+    "ko": (
+        "- **모든 출력은 한국어(Korean)로 작성하세요**\n"
+        "- 기술 용어는 영어 원문을 유지하세요 (예: RAG, GNN, Fine-tuning, API, LLM)\n"
+        "- 예시: \"RAG(Retrieval-Augmented Generation)는 검색 기반의 생성 기법입니다.\""
+    ),
+    "en": (
+        "- **Write all outputs in English**\n"
+        "- Use standard technical terminology\n"
+        "- Example: \"RAG (Retrieval-Augmented Generation) is a retrieval-based generation technique.\""
+    ),
+    "ja": (
+        "- **すべての出力は日本語で書いてください**\n"
+        "- 技術用語は英語のまま維持してください（例：RAG, GNN, Fine-tuning, API, LLM）\n"
+        "- 例：「RAG（Retrieval-Augmented Generation）は検索ベースの生成技術です。」"
+    ),
+    "zh": (
+        "- **所有输出请用中文撰写**\n"
+        "- 技术术语保持英文原文（例如：RAG, GNN, Fine-tuning, API, LLM）\n"
+        "- 示例：\"RAG（Retrieval-Augmented Generation）是一种基于检索的生成技术。\""
+    ),
+}
+
+# =============================================================================
+# System Prompt Template
+# =============================================================================
+
+SYSTEM_PROMPT_TEMPLATE = """You are a strict and insightful 'Knowledge Architect'.
 Your mission is to transform the user's rough memos into 'Atomic Notes' worthy of permanent preservation.
 
 Core Principles:
@@ -18,11 +45,25 @@ Core Principles:
 5. **Metadata Preservation**: Utilize and preserve existing frontmatter information.
 
 Language Rules:
-- **ALWAYS write all outputs in Korean (한국어)**
-- Keep technical terms in English (e.g., RAG, GNN, Fine-tuning, API, LLM)
-- Use Korean for explanations, descriptions, and general content
-- Example: "RAG(Retrieval-Augmented Generation)는 검색 기반의 생성 기법입니다."
+{language_rules}
 """
+
+
+def get_system_prompt(language: str = "ko") -> str:
+    """Get system prompt with appropriate language rules.
+    
+    Args:
+        language: Language code (ko, en, ja, zh)
+        
+    Returns:
+        Formatted system prompt
+    """
+    lang_rules = LANGUAGE_RULES.get(language, LANGUAGE_RULES["en"])
+    return SYSTEM_PROMPT_TEMPLATE.format(language_rules=lang_rules)
+
+
+# Default system prompt (for backward compatibility)
+SYSTEM_PROMPT = get_system_prompt("ko")
 
 
 # =============================================================================
