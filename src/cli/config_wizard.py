@@ -243,8 +243,12 @@ def show_current_config() -> None:
         table.add_row("Vault Path", str(config.vault_path))
         table.add_row("Max Questions", str(config.max_questions))
         table.add_row("Max Iterations", str(config.max_iterations))
-        table.add_row("Note Linking", "✅ Enabled" if config.enable_note_linking else "❌ Disabled")
+        table.add_row("Embedding Provider", config.embedding_provider)
         table.add_row("Embedding Model", config.embedding_model)
+        table.add_row("Embedding Enabled", "✅ Enabled" if config.embedding_enabled else "❌ Disabled")
+        table.add_row("Rerank Model", config.rerank_model)
+        table.add_row("Rerank Enabled", "✅ Enabled" if config.rerank_enabled else "❌ Disabled")
+        table.add_row("Note Linking", "✅ Enabled" if config.enable_note_linking else "❌ Disabled")
         
         console.print(table)
         
@@ -265,7 +269,11 @@ def set_config_value(key: str, value: str) -> None:
         "temperature": "ANA_LLM_TEMPERATURE",
         "max_questions": "ANA_MAX_QUESTIONS",
         "max_iterations": "ANA_MAX_ITERATIONS",
+        "embedding_provider": "ANA_EMBEDDING_PROVIDER",
         "embedding_model": "ANA_EMBEDDING_MODEL",
+        "embedding_enabled": "ANA_EMBEDDING_ENABLED",
+        "rerank_model": "ANA_RERANK_MODEL",
+        "rerank_enabled": "ANA_RERANK_ENABLED",
     }
     
     env_key = key_map.get(key.lower(), key.upper())

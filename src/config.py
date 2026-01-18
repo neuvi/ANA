@@ -103,6 +103,22 @@ class ANAConfig(BaseSettings):
     )
     
     # =========================================================================
+    # Embedding Settings
+    # =========================================================================
+    embedding_provider: Literal["ollama", "openai", "huggingface"] = Field(
+        default="ollama",
+        description="Embedding provider to use"
+    )
+    embedding_model: str = Field(
+        default="nomic-embed-text",
+        description="Embedding model name"
+    )
+    embedding_enabled: bool = Field(
+        default=True,
+        description="Enable embeddings for note linking"
+    )
+    
+    # =========================================================================
     # Note Linking Settings
     # =========================================================================
     max_related_links: int = Field(
@@ -111,13 +127,13 @@ class ANAConfig(BaseSettings):
         le=10,
         description="Maximum number of related note links"
     )
-    embedding_model: str = Field(
-        default="nomic-embed-text",
-        description="Ollama embedding model for semantic search"
-    )
     rerank_model: str = Field(
         default="cross-encoder/ms-marco-MiniLM-L-6-v2",
         description="Cross-encoder model for reranking"
+    )
+    rerank_enabled: bool = Field(
+        default=True,
+        description="Enable reranking for note linking"
     )
     enable_note_linking: bool = Field(
         default=True,

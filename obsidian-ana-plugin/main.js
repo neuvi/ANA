@@ -141,186 +141,303 @@ var ANASettingTab = class extends import_obsidian.PluginSettingTab {
   }
 };
 
-// modal.ts
+// sidebar.ts
 var import_obsidian2 = require("obsidian");
-var QuestionModal = class extends import_obsidian2.Modal {
-  constructor(app, questions, onSubmit, onCancel) {
-    super(app);
-    this.answers = [];
-    this.questions = questions;
-    this.answers = new Array(questions.length).fill("");
-    this.onSubmit = onSubmit;
-    this.onCancel = onCancel;
+var VIEW_TYPE_ANA = "ana-sidebar-view";
+var ANASidebarView = class extends import_obsidian2.ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
+    this.currentQuestions = [];
+    this.currentAnswers = [];
+    this.currentQuestionIndex = 0;
+    this.onAnswersComplete = null;
+    this.plugin = plugin;
   }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.createEl("h2", { text: "\u{1F914} \uCD94\uAC00 \uC815\uBCF4\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4" });
-    contentEl.createEl("p", {
-      text: "\uB354 \uC88B\uC740 Atomic Note\uB97C \uC0DD\uC131\uD558\uAE30 \uC704\uD574 \uC9C8\uBB38\uC5D0 \uB2F5\uD574\uC8FC\uC138\uC694.",
-      cls: "ana-modal-description"
-    });
-    const form = contentEl.createEl("div", { cls: "ana-question-form" });
-    this.questions.forEach((question, index) => {
-      const questionDiv = form.createEl("div", { cls: "ana-question-item" });
-      if (question.category && question.category !== "general") {
-        questionDiv.createEl("span", {
-          text: question.category,
-          cls: "ana-category-badge"
-        });
-      }
-      questionDiv.createEl("label", {
-        text: `Q${index + 1}. ${question.text}`,
-        cls: "ana-question-label"
-      });
-      const textarea = questionDiv.createEl("textarea", {
-        cls: "ana-answer-input",
-        attr: {
-          placeholder: "\uB2F5\uBCC0\uC744 \uC785\uB825\uD558\uC138\uC694... (\uC120\uD0DD\uC0AC\uD56D)",
-          rows: "3"
-        }
-      });
-      textarea.addEventListener("input", (e) => {
-        this.answers[index] = e.target.value;
-      });
-    });
-    const buttonDiv = contentEl.createEl("div", { cls: "ana-modal-buttons" });
-    const cancelBtn = buttonDiv.createEl("button", {
-      text: "Cancel",
-      cls: "ana-btn ana-btn-secondary"
-    });
-    cancelBtn.addEventListener("click", () => {
-      this.close();
-      this.onCancel();
-    });
-    const submitBtn = buttonDiv.createEl("button", {
-      text: "Submit Answers",
-      cls: "ana-btn ana-btn-primary"
-    });
-    submitBtn.addEventListener("click", () => {
-      this.close();
-      this.onSubmit(this.answers);
-    });
-    const skipBtn = buttonDiv.createEl("button", {
-      text: "Skip Questions",
-      cls: "ana-btn"
-    });
-    skipBtn.addEventListener("click", () => {
-      this.close();
-      this.onSubmit(this.answers.map(() => ""));
-    });
+  getViewType() {
+    return VIEW_TYPE_ANA;
   }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
+  getDisplayText() {
+    return "ANA - Atomic Note Architect";
   }
-};
-var PreviewModal = class extends import_obsidian2.Modal {
-  constructor(app, draftNote, onSave, onEdit, onCancel) {
-    super(app);
-    this.draftNote = draftNote;
-    this.onSave = onSave;
-    this.onEdit = onEdit;
-    this.onCancel = onCancel;
+  getIcon() {
+    return "brain";
   }
   async onOpen() {
-    const { contentEl } = this;
-    contentEl.createEl("h2", { text: "\u{1F4DD} \uC0DD\uC131\uB41C Atomic Note" });
-    contentEl.createEl("h3", {
-      text: this.draftNote.title,
-      cls: "ana-preview-title"
+    const container = this.containerEl.children[1];
+    container.empty();
+    container.addClass("ana-sidebar");
+    const header = container.createEl("div", { cls: "ana-sidebar-header" });
+    header.createEl("h4", { text: "\u{1F3DB}\uFE0F ANA" });
+    const headerButtons = header.createEl("div", { cls: "ana-header-buttons" });
+    const processBtn = headerButtons.createEl("button", {
+      text: "\u25B6 Process",
+      cls: "ana-btn ana-btn-primary ana-btn-sm"
     });
-    if (Object.keys(this.draftNote.frontmatter).length > 0) {
-      const fmDiv = contentEl.createEl("div", { cls: "ana-frontmatter-preview" });
-      fmDiv.createEl("strong", { text: "Frontmatter:" });
-      const fmPre = fmDiv.createEl("pre");
-      fmPre.setText(JSON.stringify(this.draftNote.frontmatter, null, 2));
-    }
-    const previewDiv = contentEl.createEl("div", { cls: "ana-content-preview" });
-    await import_obsidian2.MarkdownRenderer.render(
-      this.app,
-      this.draftNote.content,
-      previewDiv,
-      "",
-      new import_obsidian2.Component()
-    );
-    const buttonDiv = contentEl.createEl("div", { cls: "ana-modal-buttons" });
-    const cancelBtn = buttonDiv.createEl("button", {
-      text: "Cancel",
-      cls: "ana-btn ana-btn-secondary"
+    processBtn.addEventListener("click", () => this.plugin.processCurrentNote());
+    const clearBtn = headerButtons.createEl("button", {
+      text: "Clear",
+      cls: "ana-btn ana-btn-sm"
     });
-    cancelBtn.addEventListener("click", () => {
-      this.close();
-      this.onCancel();
+    clearBtn.addEventListener("click", () => this.clear());
+    this.logContainer = container.createEl("div", { cls: "ana-log-container" });
+    this.log("info", 'ANA \uC900\uBE44 \uC644\uB8CC. "Process" \uBC84\uD2BC\uC744 \uD074\uB9AD\uD558\uAC70\uB098 Ctrl+P \u2192 "ANA: Process Current Note"\uB97C \uC2E4\uD589\uD558\uC138\uC694.');
+    this.inputContainer = container.createEl("div", { cls: "ana-input-container" });
+    this.inputContainer.style.display = "none";
+  }
+  async onClose() {
+  }
+  /**
+   * Clear the log
+   */
+  clear() {
+    this.logContainer.empty();
+    this.inputContainer.style.display = "none";
+    this.log("info", "Log cleared.");
+  }
+  /**
+   * Add a log entry
+   */
+  log(type, content) {
+    const entry = this.logContainer.createEl("div", {
+      cls: `ana-log-entry ana-log-${type}`
     });
-    const editBtn = buttonDiv.createEl("button", {
-      text: "Edit in New Note",
-      cls: "ana-btn"
+    const time = (/* @__PURE__ */ new Date()).toLocaleTimeString("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
     });
-    editBtn.addEventListener("click", () => {
-      this.close();
-      this.onEdit();
-    });
-    const saveBtn = buttonDiv.createEl("button", {
-      text: "Save Note",
-      cls: "ana-btn ana-btn-primary"
-    });
-    saveBtn.addEventListener("click", () => {
-      this.close();
-      this.onSave();
+    const icons = {
+      info: "\u2139\uFE0F",
+      success: "\u2705",
+      error: "\u274C",
+      question: "\u2753",
+      answer: "\u{1F4AC}",
+      preview: "\u{1F4DD}"
+    };
+    entry.createEl("span", { text: `[${time}] ${icons[type]} `, cls: "ana-log-time" });
+    entry.createEl("span", { text: content });
+    this.logContainer.scrollTop = this.logContainer.scrollHeight;
+  }
+  /**
+   * Show analysis results and handle split suggestions
+   * Returns selected topics to process (empty means continue with full note)
+   */
+  async showAnalysis(response) {
+    return new Promise((resolve) => {
+      this.log("info", "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501");
+      this.log("info", "\u{1F4CA} \uBD84\uC11D \uACB0\uACFC");
+      if (response.analysis) {
+        this.log("info", `\uCE74\uD14C\uACE0\uB9AC: ${response.analysis.category}`);
+        this.log("info", `\uAC10\uC9C0\uB41C \uAC1C\uB150: ${response.analysis.detected_concepts.join(", ") || "None"}`);
+        this.log("info", `\uCDA9\uBD84\uD55C \uC815\uBCF4: ${response.analysis.is_sufficient ? "\uC608" : "\uC544\uB2C8\uC624"}`);
+        if (response.analysis.should_split && response.analysis.split_suggestions.length > 0) {
+          const topics = response.analysis.split_suggestions;
+          this.log("info", `\u26A0\uFE0F ${topics.length}\uAC1C\uC758 \uAC1C\uB150\uC774 \uAC10\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4!`);
+          this.log("info", `\uBD84\uB9AC \uC81C\uC548: ${topics.join(", ")}`);
+          this.log("info", "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501");
+          this.inputContainer.empty();
+          this.inputContainer.style.display = "flex";
+          const continueBtn = this.inputContainer.createEl("button", {
+            text: "\u25B6 \uC804\uCCB4 \uB178\uD2B8\uB85C \uACC4\uC18D",
+            cls: "ana-btn"
+          });
+          continueBtn.addEventListener("click", () => {
+            this.inputContainer.style.display = "none";
+            this.log("info", "\uC804\uCCB4 \uB178\uD2B8\uB85C \uACC4\uC18D \uC9C4\uD589...");
+            resolve([]);
+          });
+          const allBtn = this.inputContainer.createEl("button", {
+            text: `\u{1F4DD} \uBAA8\uB450 \uBD84\uB9AC (${topics.length}\uAC1C)`,
+            cls: "ana-btn ana-btn-primary"
+          });
+          allBtn.addEventListener("click", () => {
+            this.inputContainer.style.display = "none";
+            this.log("info", `${topics.length}\uAC1C \uC8FC\uC81C\uB97C \uC21C\uCC28\uC801\uC73C\uB85C \uCC98\uB9AC\uD569\uB2C8\uB2E4...`);
+            resolve([...topics]);
+          });
+          for (const topic of topics) {
+            const splitBtn = this.inputContainer.createEl("button", {
+              text: `\u{1F4DD} ${topic}`,
+              cls: "ana-btn ana-btn-sm"
+            });
+            splitBtn.addEventListener("click", () => {
+              this.inputContainer.style.display = "none";
+              this.log("info", `"${topic}" \uC8FC\uC81C\uB9CC \uCC98\uB9AC...`);
+              resolve([topic]);
+            });
+          }
+          this.logContainer.scrollTop = this.logContainer.scrollHeight;
+          return;
+        }
+      }
+      this.log("info", "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501");
+      resolve([]);
     });
   }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
-};
-var AnalysisModal = class extends import_obsidian2.Modal {
-  constructor(app, concepts, category, splitSuggestions, onContinue, onSplit) {
-    super(app);
-    this.concepts = concepts;
-    this.category = category;
-    this.splitSuggestions = splitSuggestions;
-    this.onContinue = onContinue;
-    this.onSplit = onSplit;
-  }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.createEl("h2", { text: "\u{1F4CA} \uBD84\uC11D \uACB0\uACFC" });
-    const conceptsDiv = contentEl.createEl("div", { cls: "ana-analysis-section" });
-    conceptsDiv.createEl("strong", { text: "\uAC10\uC9C0\uB41C \uAC1C\uB150:" });
-    const conceptsList = conceptsDiv.createEl("ul");
-    this.concepts.forEach((concept) => {
-      conceptsList.createEl("li", { text: concept });
-    });
-    contentEl.createEl("p", { text: `\uCE74\uD14C\uACE0\uB9AC: ${this.category}` });
-    if (this.splitSuggestions.length > 0) {
-      contentEl.createEl("h3", { text: "\u26A0\uFE0F \uC5EC\uB7EC \uAC1C\uB150\uC774 \uAC10\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4" });
-      contentEl.createEl("p", { text: "\uB178\uD2B8\uB97C \uBD84\uB9AC\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?" });
-      const splitDiv = contentEl.createEl("div", { cls: "ana-split-options" });
-      this.splitSuggestions.forEach((suggestion) => {
-        const btn = splitDiv.createEl("button", {
-          text: suggestion,
-          cls: "ana-btn ana-split-btn"
-        });
-        btn.addEventListener("click", () => {
-          this.close();
-          this.onSplit(suggestion);
-        });
+  /**
+   * Ask user to continue with next topic
+   */
+  async askContinueWithNextTopic(nextTopic, remaining) {
+    return new Promise((resolve) => {
+      this.log("info", "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501");
+      this.log("info", `\u2705 \uD604\uC7AC \uC8FC\uC81C \uC644\uB8CC!`);
+      this.log("info", `\uB2E4\uC74C \uC8FC\uC81C: "${nextTopic}" (\uB0A8\uC740 ${remaining}\uAC1C)`);
+      this.inputContainer.empty();
+      this.inputContainer.style.display = "flex";
+      const continueBtn = this.inputContainer.createEl("button", {
+        text: `\u25B6 \uB2E4\uC74C: ${nextTopic}`,
+        cls: "ana-btn ana-btn-primary"
       });
-    }
-    const buttonDiv = contentEl.createEl("div", { cls: "ana-modal-buttons" });
-    const continueBtn = buttonDiv.createEl("button", {
-      text: "Continue with Full Note",
-      cls: "ana-btn ana-btn-primary"
-    });
-    continueBtn.addEventListener("click", () => {
-      this.close();
-      this.onContinue();
+      continueBtn.addEventListener("click", () => {
+        this.inputContainer.style.display = "none";
+        this.log("info", `"${nextTopic}" \uCC98\uB9AC \uC2DC\uC791...`);
+        resolve(true);
+      });
+      const stopBtn = this.inputContainer.createEl("button", {
+        text: "\u23F9 \uC5EC\uAE30\uC11C \uC911\uB2E8",
+        cls: "ana-btn"
+      });
+      stopBtn.addEventListener("click", () => {
+        this.inputContainer.style.display = "none";
+        this.log("info", "\uBD84\uB9AC \uCC98\uB9AC \uC911\uB2E8\uB428");
+        resolve(false);
+      });
+      this.logContainer.scrollTop = this.logContainer.scrollHeight;
     });
   }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
+  /**
+   * Show questions and get answers
+   */
+  async askQuestions(questions) {
+    return new Promise((resolve) => {
+      this.currentQuestions = questions;
+      this.currentAnswers = new Array(questions.length).fill("");
+      this.currentQuestionIndex = 0;
+      this.onAnswersComplete = resolve;
+      this.log("info", `
+\u{1F914} ${questions.length}\uAC1C\uC758 \uC9C8\uBB38\uC5D0 \uB2F5\uD574\uC8FC\uC138\uC694:`);
+      this.showNextQuestion();
+    });
+  }
+  showNextQuestion() {
+    if (this.currentQuestionIndex >= this.currentQuestions.length) {
+      this.inputContainer.style.display = "none";
+      this.log("success", "\uBAA8\uB4E0 \uC9C8\uBB38\uC5D0 \uB2F5\uBCC0 \uC644\uB8CC!");
+      if (this.onAnswersComplete) {
+        this.onAnswersComplete(this.currentAnswers);
+        this.onAnswersComplete = null;
+      }
+      return;
+    }
+    const question = this.currentQuestions[this.currentQuestionIndex];
+    const qNum = this.currentQuestionIndex + 1;
+    const total = this.currentQuestions.length;
+    this.log("question", `Q${qNum}/${total}: ${question.text}`);
+    this.inputContainer.empty();
+    this.inputContainer.style.display = "flex";
+    const inputWrapper = this.inputContainer.createEl("div", { cls: "ana-input-wrapper" });
+    inputWrapper.createEl("span", {
+      text: `A${qNum}: `,
+      cls: "ana-input-label"
+    });
+    const input = inputWrapper.createEl("input", {
+      type: "text",
+      cls: "ana-input",
+      attr: { placeholder: "\uB2F5\uBCC0 \uC785\uB825 (Enter\uB85C \uC81C\uCD9C, \uBE48 \uAC12\uC73C\uB85C \uC2A4\uD0B5)" }
+    });
+    input.focus();
+    const submitBtn = this.inputContainer.createEl("button", {
+      text: "\u2192",
+      cls: "ana-btn ana-btn-primary ana-btn-sm"
+    });
+    const submitAnswer = () => {
+      const answer = input.value.trim();
+      this.currentAnswers[this.currentQuestionIndex] = answer;
+      if (answer) {
+        this.log("answer", `A${qNum}: ${answer}`);
+      } else {
+        this.log("answer", `A${qNum}: (\uC2A4\uD0B5\uB428)`);
+      }
+      this.currentQuestionIndex++;
+      this.showNextQuestion();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        submitAnswer();
+      }
+    });
+    submitBtn.addEventListener("click", submitAnswer);
+    const skipBtn = this.inputContainer.createEl("button", {
+      text: "Skip All",
+      cls: "ana-btn ana-btn-sm"
+    });
+    skipBtn.addEventListener("click", () => {
+      this.currentQuestionIndex = this.currentQuestions.length;
+      this.log("info", "\uB098\uBA38\uC9C0 \uC9C8\uBB38 \uC2A4\uD0B5\uB428");
+      this.showNextQuestion();
+    });
+  }
+  /**
+   * Show draft note preview
+   */
+  async showPreview(draft) {
+    return new Promise((resolve) => {
+      this.log("info", "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501");
+      this.log("preview", `\u{1F4DD} \uC0DD\uC131\uB41C \uB178\uD2B8: ${draft.title}`);
+      this.log("info", "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501");
+      const previewDiv = this.logContainer.createEl("div", { cls: "ana-preview-inline" });
+      if (Object.keys(draft.frontmatter).length > 0) {
+        const fmDiv = previewDiv.createEl("div", { cls: "ana-fm-preview" });
+        fmDiv.createEl("code", { text: "---\n" + JSON.stringify(draft.frontmatter, null, 2) + "\n---" });
+      }
+      const contentPreview = draft.content.length > 500 ? draft.content.substring(0, 500) + "..." : draft.content;
+      previewDiv.createEl("pre", { text: contentPreview, cls: "ana-content-preview-text" });
+      this.inputContainer.empty();
+      this.inputContainer.style.display = "flex";
+      const saveBtn = this.inputContainer.createEl("button", {
+        text: "\u{1F4BE} Save",
+        cls: "ana-btn ana-btn-primary"
+      });
+      saveBtn.addEventListener("click", () => {
+        this.inputContainer.style.display = "none";
+        resolve("save");
+      });
+      const editBtn = this.inputContainer.createEl("button", {
+        text: "\u270F\uFE0F Edit in Obsidian",
+        cls: "ana-btn"
+      });
+      editBtn.addEventListener("click", () => {
+        this.inputContainer.style.display = "none";
+        resolve("edit");
+      });
+      const cancelBtn = this.inputContainer.createEl("button", {
+        text: "Cancel",
+        cls: "ana-btn"
+      });
+      cancelBtn.addEventListener("click", () => {
+        this.inputContainer.style.display = "none";
+        resolve("cancel");
+      });
+      this.logContainer.scrollTop = this.logContainer.scrollHeight;
+    });
+  }
+  /**
+   * Show processing status
+   */
+  showProcessing(message) {
+    this.log("info", `\u23F3 ${message}...`);
+  }
+  /**
+   * Show success message
+   */
+  showSuccess(message) {
+    this.log("success", message);
+  }
+  /**
+   * Show error message
+   */
+  showError(message) {
+    this.log("error", message);
   }
 };
 
@@ -329,17 +446,33 @@ var ANAPlugin = class extends import_obsidian3.Plugin {
   constructor() {
     super(...arguments);
     this.currentSessionId = null;
+    this.sidebarView = null;
   }
   async onload() {
     await this.loadSettings();
     this.apiClient = new ANAApiClient(this.settings.serverUrl);
-    this.addRibbonIcon("brain", "ANA: Process Note", async () => {
-      await this.processCurrentNote();
+    this.registerView(
+      VIEW_TYPE_ANA,
+      (leaf) => {
+        this.sidebarView = new ANASidebarView(leaf, this);
+        return this.sidebarView;
+      }
+    );
+    this.addRibbonIcon("brain", "Open ANA Panel", async () => {
+      await this.activateSidebar();
+    });
+    this.addCommand({
+      id: "open-sidebar",
+      name: "Open ANA Panel",
+      callback: async () => {
+        await this.activateSidebar();
+      }
     });
     this.addCommand({
       id: "process-current-note",
       name: "Process Current Note",
       editorCallback: async (editor, view) => {
+        await this.activateSidebar();
         await this.processCurrentNote();
       }
     });
@@ -349,6 +482,7 @@ var ANAPlugin = class extends import_obsidian3.Plugin {
       editorCallback: async (editor, view) => {
         const selection = editor.getSelection();
         if (selection) {
+          await this.activateSidebar();
           await this.processContent(selection, "Selection");
         } else {
           new import_obsidian3.Notice("No text selected");
@@ -363,10 +497,35 @@ var ANAPlugin = class extends import_obsidian3.Plugin {
       }
     });
     this.addSettingTab(new ANASettingTab(this.app, this));
+    this.app.workspace.onLayoutReady(() => {
+      this.initLeaf();
+    });
   }
   onunload() {
     if (this.currentSessionId) {
       this.apiClient.deleteSession(this.currentSessionId);
+    }
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_ANA);
+  }
+  initLeaf() {
+    if (this.app.workspace.getLeavesOfType(VIEW_TYPE_ANA).length === 0) {
+    }
+  }
+  async activateSidebar() {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_ANA);
+    if (leaves.length === 0) {
+      const leaf = this.app.workspace.getRightLeaf(false);
+      if (leaf) {
+        await leaf.setViewState({
+          type: VIEW_TYPE_ANA,
+          active: true
+        });
+      }
+    }
+    const activeLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_ANA)[0];
+    if (activeLeaf) {
+      this.app.workspace.revealLeaf(activeLeaf);
+      this.sidebarView = activeLeaf.view;
     }
   }
   async loadSettings() {
@@ -376,25 +535,35 @@ var ANAPlugin = class extends import_obsidian3.Plugin {
     await this.saveData(this.settings);
     this.apiClient = new ANAApiClient(this.settings.serverUrl);
   }
-  /**
-   * Check server connection and show result
-   */
   async checkServerConnection() {
-    new import_obsidian3.Notice("Checking ANA server connection...");
     const isConnected = await this.apiClient.checkStatus();
-    if (isConnected) {
-      new import_obsidian3.Notice("\u2705 ANA server is running");
+    if (this.sidebarView) {
+      if (isConnected) {
+        this.sidebarView.showSuccess("ANA \uC11C\uBC84 \uC5F0\uACB0\uB428");
+      } else {
+        this.sidebarView.showError('\uC11C\uBC84\uC5D0 \uC5F0\uACB0\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4. "ana serve" \uC2E4\uD589 \uD544\uC694');
+      }
     } else {
-      new import_obsidian3.Notice('\u274C Cannot connect to ANA server. Make sure to run "ana serve"');
+      new import_obsidian3.Notice(isConnected ? "\u2705 ANA server is running" : "\u274C Cannot connect to ANA server");
     }
   }
-  /**
-   * Process the current note
-   */
   async processCurrentNote() {
-    const activeView = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
+    let activeView = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
     if (!activeView) {
-      new import_obsidian3.Notice("No active markdown note");
+      const leaves = this.app.workspace.getLeavesOfType("markdown");
+      for (const leaf of leaves) {
+        if (leaf.view instanceof import_obsidian3.MarkdownView) {
+          activeView = leaf.view;
+          break;
+        }
+      }
+    }
+    if (!activeView) {
+      if (this.sidebarView) {
+        this.sidebarView.showError("\uC5F4\uB9B0 \uB9C8\uD06C\uB2E4\uC6B4 \uB178\uD2B8\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. Obsidian\uC5D0\uC11C \uB178\uD2B8\uB97C \uBA3C\uC800 \uC5F4\uC5B4\uC8FC\uC138\uC694.");
+      } else {
+        new import_obsidian3.Notice("No active markdown note");
+      }
       return;
     }
     const content = activeView.editor.getValue();
@@ -402,139 +571,96 @@ var ANAPlugin = class extends import_obsidian3.Plugin {
     const title = (file == null ? void 0 : file.basename) || "Untitled";
     await this.processContent(content, title);
   }
-  /**
-   * Process content through ANA pipeline
-   */
   async processContent(content, title) {
-    var _a;
-    const isConnected = await this.apiClient.checkStatus();
-    if (!isConnected) {
-      new import_obsidian3.Notice('\u274C ANA server not running. Run "ana serve" in terminal.');
+    if (!this.sidebarView) {
+      await this.activateSidebar();
+    }
+    const view = this.sidebarView;
+    if (!view) {
+      new import_obsidian3.Notice("Failed to open ANA panel");
       return;
     }
-    new import_obsidian3.Notice("\u{1F504} Processing note...");
+    const isConnected = await this.apiClient.checkStatus();
+    if (!isConnected) {
+      view.showError('ANA \uC11C\uBC84\uAC00 \uC2E4\uD589 \uC911\uC774\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uD130\uBBF8\uB110\uC5D0\uC11C "ana serve" \uC2E4\uD589');
+      return;
+    }
+    view.showProcessing(`"${title}" \uCC98\uB9AC \uC911`);
     try {
       const response = await this.apiClient.processNote(content, void 0, title);
       this.currentSessionId = response.session_id;
-      if (((_a = response.analysis) == null ? void 0 : _a.should_split) && response.analysis.split_suggestions.length > 0) {
-        await this.handleAnalysis(response, content);
-        return;
+      const topics = await view.showAnalysis(response);
+      if (topics.length === 0) {
+        await this.handleResponse(response, view);
+      } else {
+        let currentResponse = response;
+        for (let i = 0; i < topics.length; i++) {
+          const topic = topics[i];
+          view.log("info", `
+\u{1F4DD} \uC8FC\uC81C ${i + 1}/${topics.length}: ${topic}`);
+          await this.handleResponse(currentResponse, view);
+          if (i < topics.length - 1) {
+            const nextTopic = topics[i + 1];
+            const remaining = topics.length - i - 1;
+            const shouldContinue = await view.askContinueWithNextTopic(nextTopic, remaining);
+            if (!shouldContinue) {
+              view.log("info", "\uBD84\uB9AC \uCC98\uB9AC\uAC00 \uC911\uB2E8\uB418\uC5C8\uC2B5\uB2C8\uB2E4.");
+              break;
+            }
+            view.showProcessing(`"${nextTopic}" \uCC98\uB9AC \uC911`);
+            currentResponse = await this.apiClient.processNote(content, void 0, nextTopic);
+            this.currentSessionId = currentResponse.session_id;
+          }
+        }
+        view.showSuccess("\u{1F389} \uBD84\uB9AC \uCC98\uB9AC \uC644\uB8CC!");
       }
-      await this.handleResponse(response);
     } catch (error) {
-      new import_obsidian3.Notice(`\u274C Error: ${error.message}`);
+      view.showError(`\uC624\uB958: ${error.message}`);
       this.currentSessionId = null;
     }
   }
-  /**
-   * Handle analysis with split options
-   */
-  async handleAnalysis(response, originalContent) {
-    if (!response.analysis) return;
-    const modal = new AnalysisModal(
-      this.app,
-      response.analysis.detected_concepts,
-      response.analysis.category,
-      response.analysis.split_suggestions,
-      // Continue with full note
-      async () => {
-        await this.handleResponse(response);
-      },
-      // Split by topic
-      async (topic) => {
-        new import_obsidian3.Notice(`Splitting for: ${topic}`);
-        await this.handleResponse(response);
-      }
-    );
-    modal.open();
-  }
-  /**
-   * Handle response (questions or completion)
-   */
-  async handleResponse(response) {
+  async handleResponse(response, view) {
     if (response.status === "needs_info" && response.questions.length > 0) {
-      const modal = new QuestionModal(
-        this.app,
-        response.questions,
-        // On submit
-        async (answers) => {
-          await this.submitAnswers(answers);
-        },
-        // On cancel
-        () => {
-          this.cleanupSession();
-          new import_obsidian3.Notice("Processing cancelled");
-        }
-      );
-      modal.open();
-    } else if (response.status === "completed" && response.draft_note) {
-      if (this.settings.showPreview) {
-        await this.showPreview(response.draft_note);
-      } else if (this.settings.autoSave) {
-        await this.saveNote();
-      } else {
-        await this.createNoteInObsidian(response.draft_note);
-      }
-    }
-  }
-  /**
-   * Submit answers and continue processing
-   */
-  async submitAnswers(answers) {
-    if (!this.currentSessionId) return;
-    new import_obsidian3.Notice("\u{1F504} Processing answers...");
-    try {
-      const response = await this.apiClient.answerQuestions(this.currentSessionId, answers);
-      await this.handleResponse(response);
-    } catch (error) {
-      new import_obsidian3.Notice(`\u274C Error: ${error.message}`);
-      this.cleanupSession();
-    }
-  }
-  /**
-   * Show preview modal
-   */
-  async showPreview(draftNote) {
-    const modal = new PreviewModal(
-      this.app,
-      draftNote,
-      // On save
-      async () => {
-        await this.saveNote();
-      },
-      // On edit (create in Obsidian)
-      async () => {
-        await this.createNoteInObsidian(draftNote);
-      },
-      // On cancel
-      () => {
+      const answers = await view.askQuestions(response.questions);
+      view.showProcessing("\uB2F5\uBCC0 \uCC98\uB9AC \uC911");
+      try {
+        const newResponse = await this.apiClient.answerQuestions(
+          this.currentSessionId,
+          answers
+        );
+        await this.handleResponse(newResponse, view);
+      } catch (error) {
+        view.showError(`\uC624\uB958: ${error.message}`);
         this.cleanupSession();
       }
-    );
-    modal.open();
+    } else if (response.status === "completed" && response.draft_note) {
+      const action = await view.showPreview(response.draft_note);
+      if (action === "save") {
+        await this.saveNoteViaAPI(view);
+      } else if (action === "edit") {
+        await this.createNoteInObsidian(response.draft_note, view);
+      } else {
+        view.log("info", "\uCDE8\uC18C\uB428");
+        this.cleanupSession();
+      }
+    }
   }
-  /**
-   * Save note via API
-   */
-  async saveNote() {
+  async saveNoteViaAPI(view) {
     if (!this.currentSessionId) return;
     try {
       const result = await this.apiClient.saveNote(this.currentSessionId);
       if (result.success) {
-        new import_obsidian3.Notice(`\u2705 Note saved: ${result.path}`);
+        view.showSuccess(`\uB178\uD2B8 \uC800\uC7A5\uB428: ${result.path}`);
       } else {
-        new import_obsidian3.Notice(`\u274C Save failed: ${result.message}`);
+        view.showError(`\uC800\uC7A5 \uC2E4\uD328: ${result.message}`);
       }
     } catch (error) {
-      new import_obsidian3.Notice(`\u274C Error saving: ${error.message}`);
+      view.showError(`\uC800\uC7A5 \uC624\uB958: ${error.message}`);
     } finally {
       this.cleanupSession();
     }
   }
-  /**
-   * Create note directly in Obsidian
-   */
-  async createNoteInObsidian(draftNote) {
+  async createNoteInObsidian(draftNote, view) {
     try {
       let content = "";
       if (Object.keys(draftNote.frontmatter).length > 0) {
@@ -556,20 +682,17 @@ var ANAPlugin = class extends import_obsidian3.Plugin {
       const fileName = `${draftNote.title}.md`;
       const file = await this.app.vault.create(fileName, content);
       await this.app.workspace.getLeaf().openFile(file);
-      new import_obsidian3.Notice(`\u2705 Created: ${fileName}`);
+      view.showSuccess(`Obsidian\uC5D0 \uC0DD\uC131\uB428: ${fileName}`);
     } catch (error) {
       if (error.message.includes("already exists")) {
-        new import_obsidian3.Notice(`\u274C File already exists: ${draftNote.title}.md`);
+        view.showError(`\uD30C\uC77C\uC774 \uC774\uBBF8 \uC874\uC7AC\uD569\uB2C8\uB2E4: ${draftNote.title}.md`);
       } else {
-        new import_obsidian3.Notice(`\u274C Error creating file: ${error.message}`);
+        view.showError(`\uD30C\uC77C \uC0DD\uC131 \uC624\uB958: ${error.message}`);
       }
     } finally {
       this.cleanupSession();
     }
   }
-  /**
-   * Cleanup session
-   */
   cleanupSession() {
     if (this.currentSessionId) {
       this.apiClient.deleteSession(this.currentSessionId);

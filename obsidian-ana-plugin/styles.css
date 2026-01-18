@@ -1,6 +1,189 @@
-/* ANA Obsidian Plugin Styles */
+/* ANA Obsidian Plugin Styles - Sidebar Version */
 
-/* Modal styles */
+/* Sidebar container */
+.ana-sidebar {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 0;
+}
+
+.ana-sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+}
+
+.ana-sidebar-header h4 {
+    margin: 0;
+    font-size: 14px;
+}
+
+.ana-header-buttons {
+    display: flex;
+    gap: 6px;
+}
+
+/* Log container (terminal-like) */
+.ana-log-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-family: var(--font-monospace);
+    font-size: 12px;
+    line-height: 1.5;
+    background: var(--background-primary);
+}
+
+.ana-log-entry {
+    margin-bottom: 4px;
+    word-wrap: break-word;
+}
+
+.ana-log-time {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.ana-log-info {
+    color: var(--text-normal);
+}
+
+.ana-log-success {
+    color: var(--text-success, #58a55c);
+}
+
+.ana-log-error {
+    color: var(--text-error, #e55);
+}
+
+.ana-log-question {
+    color: var(--text-accent);
+    font-weight: 600;
+    margin-top: 8px;
+}
+
+.ana-log-answer {
+    color: var(--interactive-accent);
+    padding-left: 16px;
+}
+
+.ana-log-preview {
+    color: var(--text-accent);
+    font-weight: 600;
+}
+
+/* Input container */
+.ana-input-container {
+    display: flex;
+    gap: 6px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.ana-input-wrapper {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 200px;
+}
+
+.ana-input-label {
+    font-family: var(--font-monospace);
+    font-size: 12px;
+    color: var(--interactive-accent);
+    margin-right: 4px;
+    white-space: nowrap;
+}
+
+.ana-input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: var(--font-monospace);
+    font-size: 12px;
+}
+
+.ana-input:focus {
+    border-color: var(--interactive-accent);
+    outline: none;
+}
+
+/* Buttons */
+.ana-btn {
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.ana-btn:hover {
+    background: var(--background-modifier-hover);
+}
+
+.ana-btn-primary {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+}
+
+.ana-btn-primary:hover {
+    background: var(--interactive-accent-hover);
+}
+
+.ana-btn-sm {
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
+/* Preview styles */
+.ana-preview-inline {
+    margin: 8px 0;
+    padding: 10px;
+    background: var(--background-secondary);
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+}
+
+.ana-fm-preview {
+    margin-bottom: 8px;
+    padding: 8px;
+    background: var(--background-primary);
+    border-radius: 4px;
+}
+
+.ana-fm-preview code {
+    font-size: 11px;
+    white-space: pre-wrap;
+}
+
+.ana-content-preview-text {
+    font-size: 11px;
+    margin: 0;
+    padding: 8px;
+    background: var(--background-primary);
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* Modal styles (keeping for backwards compatibility) */
 .ana-modal-description {
     color: var(--text-muted);
     margin-bottom: 1em;
@@ -45,12 +228,6 @@
     resize: vertical;
 }
 
-.ana-answer-input:focus {
-    border-color: var(--interactive-accent);
-    outline: none;
-}
-
-/* Button styles */
 .ana-modal-buttons {
     display: flex;
     gap: 0.5em;
@@ -58,105 +235,4 @@
     margin-top: 1.5em;
     padding-top: 1em;
     border-top: 1px solid var(--background-modifier-border);
-}
-
-.ana-btn {
-    padding: 8px 16px;
-    border-radius: 4px;
-    border: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary);
-    color: var(--text-normal);
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.15s ease;
-}
-
-.ana-btn:hover {
-    background: var(--background-modifier-hover);
-}
-
-.ana-btn-primary {
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    border-color: var(--interactive-accent);
-}
-
-.ana-btn-primary:hover {
-    background: var(--interactive-accent-hover);
-}
-
-.ana-btn-secondary {
-    background: transparent;
-}
-
-/* Preview styles */
-.ana-preview-title {
-    color: var(--text-accent);
-    margin-bottom: 1em;
-}
-
-.ana-frontmatter-preview {
-    background: var(--background-secondary);
-    padding: 1em;
-    border-radius: 4px;
-    margin-bottom: 1em;
-}
-
-.ana-frontmatter-preview pre {
-    margin: 0.5em 0 0 0;
-    font-size: 0.85em;
-    overflow-x: auto;
-}
-
-.ana-content-preview {
-    max-height: 50vh;
-    overflow-y: auto;
-    padding: 1em;
-    background: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-}
-
-/* Analysis styles */
-.ana-analysis-section {
-    margin-bottom: 1em;
-}
-
-.ana-analysis-section ul {
-    margin: 0.5em 0;
-    padding-left: 1.5em;
-}
-
-.ana-split-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5em;
-    margin: 1em 0;
-}
-
-.ana-split-btn {
-    flex: 1 1 auto;
-    text-align: left;
-}
-
-/* Loading state */
-.ana-loading {
-    display: flex;
-    align-items: center;
-    gap: 0.5em;
-}
-
-.ana-spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid var(--background-modifier-border);
-    border-top-color: var(--interactive-accent);
-    border-radius: 50%;
-    animation: ana-spin 1s linear infinite;
-}
-
-@keyframes ana-spin {
-    to {
-        transform: rotate(360deg);
-    }
 }

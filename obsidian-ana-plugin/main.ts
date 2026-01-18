@@ -1,18 +1,19 @@
 /**
  * ANA - Atomic Note Architect Obsidian Plugin
  * 
- * Main plugin entry point.
+ * Main plugin entry point with sidebar view.
  */
 
-import { App, Editor, MarkdownView, Notice, Plugin, TFile } from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
 import { ANAApiClient, ProcessResponse, DraftNote } from './api';
 import { ANASettings, ANASettingTab, DEFAULT_SETTINGS } from './settings';
-import { QuestionModal, PreviewModal, AnalysisModal } from './modal';
+import { ANASidebarView, VIEW_TYPE_ANA } from './sidebar';
 
 export default class ANAPlugin extends Plugin {
     settings: ANASettings;
     apiClient: ANAApiClient;
     private currentSessionId: string | null = null;
+    private sidebarView: ANASidebarView | null = null;
 
     async onload() {
         await this.loadSettings();
@@ -20,16 +21,34 @@ export default class ANAPlugin extends Plugin {
         // Initialize API client
         this.apiClient = new ANAApiClient(this.settings.serverUrl);
 
-        // Add ribbon icon
-        this.addRibbonIcon('brain', 'ANA: Process Note', async () => {
-            await this.processCurrentNote();
+        // Register sidebar view
+        this.registerView(
+            VIEW_TYPE_ANA,
+            (leaf) => {
+                this.sidebarView = new ANASidebarView(leaf, this);
+                return this.sidebarView;
+            }
+        );
+
+        // Add ribbon icon to open sidebar
+        this.addRibbonIcon('brain', 'Open ANA Panel', async () => {
+            await this.activateSidebar();
         });
 
         // Add commands
         this.addCommand({
+            id: 'open-sidebar',
+            name: 'Open ANA Panel',
+            callback: async () => {
+                await this.activateSidebar();
+            }
+        });
+
+        this.addCommand({
             id: 'process-current-note',
             name: 'Process Current Note',
             editorCallback: async (editor: Editor, view: MarkdownView) => {
+                await this.activateSidebar();
                 await this.processCurrentNote();
             }
         });
@@ -40,6 +59,7 @@ export default class ANAPlugin extends Plugin {
             editorCallback: async (editor: Editor, view: MarkdownView) => {
                 const selection = editor.getSelection();
                 if (selection) {
+                    await this.activateSidebar();
                     await this.processContent(selection, 'Selection');
                 } else {
                     new Notice('No text selected');
@@ -57,12 +77,46 @@ export default class ANAPlugin extends Plugin {
 
         // Register settings tab
         this.addSettingTab(new ANASettingTab(this.app, this));
+
+        // Activate sidebar on startup if it was open
+        this.app.workspace.onLayoutReady(() => {
+            this.initLeaf();
+        });
     }
 
     onunload() {
-        // Cleanup any active sessions
+        // Cleanup
         if (this.currentSessionId) {
             this.apiClient.deleteSession(this.currentSessionId);
+        }
+        this.app.workspace.detachLeavesOfType(VIEW_TYPE_ANA);
+    }
+
+    private initLeaf(): void {
+        if (this.app.workspace.getLeavesOfType(VIEW_TYPE_ANA).length === 0) {
+            // Don't auto-open, user will open via ribbon or command
+        }
+    }
+
+    async activateSidebar(): Promise<void> {
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_ANA);
+
+        if (leaves.length === 0) {
+            // Create new leaf in right sidebar
+            const leaf = this.app.workspace.getRightLeaf(false);
+            if (leaf) {
+                await leaf.setViewState({
+                    type: VIEW_TYPE_ANA,
+                    active: true,
+                });
+            }
+        }
+
+        // Focus the sidebar
+        const activeLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_ANA)[0];
+        if (activeLeaf) {
+            this.app.workspace.revealLeaf(activeLeaf);
+            this.sidebarView = activeLeaf.view as ANASidebarView;
         }
     }
 
@@ -72,32 +126,44 @@ export default class ANAPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
-        // Update API client with new URL
         this.apiClient = new ANAApiClient(this.settings.serverUrl);
     }
 
-    /**
-     * Check server connection and show result
-     */
     async checkServerConnection() {
-        new Notice('Checking ANA server connection...');
         const isConnected = await this.apiClient.checkStatus();
 
-        if (isConnected) {
-            new Notice('✅ ANA server is running');
+        if (this.sidebarView) {
+            if (isConnected) {
+                this.sidebarView.showSuccess('ANA 서버 연결됨');
+            } else {
+                this.sidebarView.showError('서버에 연결할 수 없습니다. "ana serve" 실행 필요');
+            }
         } else {
-            new Notice('❌ Cannot connect to ANA server. Make sure to run "ana serve"');
+            new Notice(isConnected ? '✅ ANA server is running' : '❌ Cannot connect to ANA server');
         }
     }
 
-    /**
-     * Process the current note
-     */
     async processCurrentNote() {
-        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        // Try to get active markdown view first
+        let activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+
+        // If not found (sidebar might be focused), search all leaves
+        if (!activeView) {
+            const leaves = this.app.workspace.getLeavesOfType('markdown');
+            for (const leaf of leaves) {
+                if (leaf.view instanceof MarkdownView) {
+                    activeView = leaf.view;
+                    break;
+                }
+            }
+        }
 
         if (!activeView) {
-            new Notice('No active markdown note');
+            if (this.sidebarView) {
+                this.sidebarView.showError('열린 마크다운 노트가 없습니다. Obsidian에서 노트를 먼저 열어주세요.');
+            } else {
+                new Notice('No active markdown note');
+            }
             return;
         }
 
@@ -108,161 +174,129 @@ export default class ANAPlugin extends Plugin {
         await this.processContent(content, title);
     }
 
-    /**
-     * Process content through ANA pipeline
-     */
     async processContent(content: string, title: string) {
-        // Check server connection first
-        const isConnected = await this.apiClient.checkStatus();
-        if (!isConnected) {
-            new Notice('❌ ANA server not running. Run "ana serve" in terminal.');
+        // Ensure sidebar is active
+        if (!this.sidebarView) {
+            await this.activateSidebar();
+        }
+
+        const view = this.sidebarView;
+        if (!view) {
+            new Notice('Failed to open ANA panel');
             return;
         }
 
-        new Notice('🔄 Processing note...');
+        // Check server connection
+        const isConnected = await this.apiClient.checkStatus();
+        if (!isConnected) {
+            view.showError('ANA 서버가 실행 중이지 않습니다. 터미널에서 "ana serve" 실행');
+            return;
+        }
+
+        view.showProcessing(`"${title}" 처리 중`);
 
         try {
             // Step 1: Process the note
             const response = await this.apiClient.processNote(content, undefined, title);
             this.currentSessionId = response.session_id;
 
-            // Step 2: Handle analysis if there are split suggestions
-            if (response.analysis?.should_split && response.analysis.split_suggestions.length > 0) {
-                await this.handleAnalysis(response, content);
-                return;
+            // Show analysis and get topics to process
+            const topics = await view.showAnalysis(response);
+
+            if (topics.length === 0) {
+                // Continue with full note
+                await this.handleResponse(response, view);
+            } else {
+                // Process topics sequentially
+                let currentResponse = response;
+
+                for (let i = 0; i < topics.length; i++) {
+                    const topic = topics[i];
+
+                    view.log('info', `\n📝 주제 ${i + 1}/${topics.length}: ${topic}`);
+
+                    // Process this topic
+                    await this.handleResponse(currentResponse, view);
+
+                    // If there are more topics, ask to continue
+                    if (i < topics.length - 1) {
+                        const nextTopic = topics[i + 1];
+                        const remaining = topics.length - i - 1;
+                        const shouldContinue = await view.askContinueWithNextTopic(nextTopic, remaining);
+
+                        if (!shouldContinue) {
+                            view.log('info', '분리 처리가 중단되었습니다.');
+                            break;
+                        }
+
+                        // Process next topic with new session
+                        view.showProcessing(`"${nextTopic}" 처리 중`);
+                        currentResponse = await this.apiClient.processNote(content, undefined, nextTopic);
+                        this.currentSessionId = currentResponse.session_id;
+                    }
+                }
+
+                view.showSuccess('🎉 분리 처리 완료!');
             }
 
-            // Step 3: Handle questions
-            await this.handleResponse(response);
-
         } catch (error) {
-            new Notice(`❌ Error: ${error.message}`);
+            view.showError(`오류: ${error.message}`);
             this.currentSessionId = null;
         }
     }
 
-    /**
-     * Handle analysis with split options
-     */
-    private async handleAnalysis(response: ProcessResponse, originalContent: string) {
-        if (!response.analysis) return;
-
-        const modal = new AnalysisModal(
-            this.app,
-            response.analysis.detected_concepts,
-            response.analysis.category,
-            response.analysis.split_suggestions,
-            // Continue with full note
-            async () => {
-                await this.handleResponse(response);
-            },
-            // Split by topic
-            async (topic: string) => {
-                new Notice(`Splitting for: ${topic}`);
-                // For now, continue with the original content
-                // In future, could extract specific content
-                await this.handleResponse(response);
-            }
-        );
-        modal.open();
-    }
-
-    /**
-     * Handle response (questions or completion)
-     */
-    private async handleResponse(response: ProcessResponse) {
+    private async handleResponse(response: ProcessResponse, view: ANASidebarView) {
         if (response.status === 'needs_info' && response.questions.length > 0) {
-            // Show question modal
-            const modal = new QuestionModal(
-                this.app,
-                response.questions,
-                // On submit
-                async (answers: string[]) => {
-                    await this.submitAnswers(answers);
-                },
-                // On cancel
-                () => {
-                    this.cleanupSession();
-                    new Notice('Processing cancelled');
-                }
-            );
-            modal.open();
-        } else if (response.status === 'completed' && response.draft_note) {
-            // Show preview or save directly
-            if (this.settings.showPreview) {
-                await this.showPreview(response.draft_note);
-            } else if (this.settings.autoSave) {
-                await this.saveNote();
-            } else {
-                await this.createNoteInObsidian(response.draft_note);
-            }
-        }
-    }
+            // Get answers via sidebar
+            const answers = await view.askQuestions(response.questions);
 
-    /**
-     * Submit answers and continue processing
-     */
-    private async submitAnswers(answers: string[]) {
-        if (!this.currentSessionId) return;
+            view.showProcessing('답변 처리 중');
 
-        new Notice('🔄 Processing answers...');
+            try {
+                const newResponse = await this.apiClient.answerQuestions(
+                    this.currentSessionId!,
+                    answers
+                );
 
-        try {
-            const response = await this.apiClient.answerQuestions(this.currentSessionId, answers);
-            await this.handleResponse(response);
-        } catch (error) {
-            new Notice(`❌ Error: ${error.message}`);
-            this.cleanupSession();
-        }
-    }
-
-    /**
-     * Show preview modal
-     */
-    private async showPreview(draftNote: DraftNote) {
-        const modal = new PreviewModal(
-            this.app,
-            draftNote,
-            // On save
-            async () => {
-                await this.saveNote();
-            },
-            // On edit (create in Obsidian)
-            async () => {
-                await this.createNoteInObsidian(draftNote);
-            },
-            // On cancel
-            () => {
+                // Recursive call for more questions or completion
+                await this.handleResponse(newResponse, view);
+            } catch (error) {
+                view.showError(`오류: ${error.message}`);
                 this.cleanupSession();
             }
-        );
-        modal.open();
+        } else if (response.status === 'completed' && response.draft_note) {
+            // Show preview and get action
+            const action = await view.showPreview(response.draft_note);
+
+            if (action === 'save') {
+                await this.saveNoteViaAPI(view);
+            } else if (action === 'edit') {
+                await this.createNoteInObsidian(response.draft_note, view);
+            } else {
+                view.log('info', '취소됨');
+                this.cleanupSession();
+            }
+        }
     }
 
-    /**
-     * Save note via API
-     */
-    private async saveNote() {
+    private async saveNoteViaAPI(view: ANASidebarView) {
         if (!this.currentSessionId) return;
 
         try {
             const result = await this.apiClient.saveNote(this.currentSessionId);
             if (result.success) {
-                new Notice(`✅ Note saved: ${result.path}`);
+                view.showSuccess(`노트 저장됨: ${result.path}`);
             } else {
-                new Notice(`❌ Save failed: ${result.message}`);
+                view.showError(`저장 실패: ${result.message}`);
             }
         } catch (error) {
-            new Notice(`❌ Error saving: ${error.message}`);
+            view.showError(`저장 오류: ${error.message}`);
         } finally {
             this.cleanupSession();
         }
     }
 
-    /**
-     * Create note directly in Obsidian
-     */
-    private async createNoteInObsidian(draftNote: DraftNote) {
+    private async createNoteInObsidian(draftNote: DraftNote, view: ANASidebarView) {
         try {
             // Build content with frontmatter
             let content = '';
@@ -287,21 +321,18 @@ export default class ANAPlugin extends Plugin {
             // Open the new file
             await this.app.workspace.getLeaf().openFile(file);
 
-            new Notice(`✅ Created: ${fileName}`);
+            view.showSuccess(`Obsidian에 생성됨: ${fileName}`);
         } catch (error) {
             if (error.message.includes('already exists')) {
-                new Notice(`❌ File already exists: ${draftNote.title}.md`);
+                view.showError(`파일이 이미 존재합니다: ${draftNote.title}.md`);
             } else {
-                new Notice(`❌ Error creating file: ${error.message}`);
+                view.showError(`파일 생성 오류: ${error.message}`);
             }
         } finally {
             this.cleanupSession();
         }
     }
 
-    /**
-     * Cleanup session
-     */
     private cleanupSession() {
         if (this.currentSessionId) {
             this.apiClient.deleteSession(this.currentSessionId);

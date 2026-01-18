@@ -252,11 +252,25 @@ class LinkAnalyzer:
             return [(c, 1.0) for c in valid_candidates]
     
     def _get_reranker(self):
-        """Lazy load Cross-Encoder reranker."""
+        """Lazy load Cross-Encoder reranker.
+        
+        Checks for local model in data/models/rerank/ first,
+        then falls back to downloading from HuggingFace.
+        """
         if self._reranker is None:
             try:
                 from sentence_transformers import CrossEncoder
-                self._reranker = CrossEncoder(self.rerank_model)
+                from pathlib import Path
+                
+                # Check for local model first
+                model_folder = self.rerank_model.replace("/", "_")
+                local_path = Path("data/models/rerank") / model_folder
+                
+                if local_path.exists():
+                    self._reranker = CrossEncoder(str(local_path))
+                else:
+                    # Fall back to HuggingFace (will download to cache)
+                    self._reranker = CrossEncoder(self.rerank_model)
             except ImportError:
                 return None
         return self._reranker
