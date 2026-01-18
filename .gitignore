@@ -50,8 +50,7 @@ htmlcov/
 
 # Embedding cache (optional - uncomment if you want to ignore cache)
 # data/embedding_cache/
-
-
+data/models
 # OS
 .DS_Store
 Thumbs.db
