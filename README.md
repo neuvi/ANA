@@ -95,17 +95,47 @@ ANA_VAULT_PATH=~/vault
 
 ## 사용법
 
-### CLI 실행
+### CLI 명령어
 
 ```bash
-# 대화형 모드
-python -m src.main
+# 도움말 보기
+ana --help
 
-# 파일에서 입력
-python -m src.main --input raw_note.txt
+# 대화형 모드로 새 노트 생성
+ana new
+
+# 파일 처리
+ana process raw_note.txt
 
 # 출력 디렉토리 지정
-python -m src.main --output ~/vault/notes/
+ana new --output ~/vault/notes/
+
+# 비대화형 모드
+ana new --no-interactive
+
+# 임베딩 동기화
+ana sync
+```
+
+### 설정 관리
+
+```bash
+# 대화형 설정 마법사 (처음 사용시 권장)
+ana config init
+
+# 현재 설정 확인
+ana config show
+
+# 개별 설정 변경
+ana config set llm_provider ollama
+ana config set vault_path ~/Documents/Obsidian
+```
+
+### 환경 진단
+
+```bash
+# 환경 및 설정 진단
+ana doctor
 ```
 
 ### Python 코드에서 사용
@@ -141,28 +171,67 @@ agent.save_note(response.draft_note)
 ```
 04.ANA/
 ├── src/
-│   ├── __init__.py
+│   ├── cli/                   # CLI 모듈
+│   │   ├── main.py            # Click 기반 CLI 진입점
+│   │   ├── commands.py        # 서브커맨드 구현
+│   │   ├── config_wizard.py   # 설정 마법사
+│   │   └── doctor.py          # 환경 진단
+│   ├── api/                   # API 서버 (Obsidian 플러그인용)
+│   │   ├── server.py          # FastAPI 서버
+│   │   └── schemas.py         # API 스키마
 │   ├── config.py              # 설정 관리
-│   ├── llm_config.py          # LLM provider 설정
-│   ├── schemas.py             # 데이터 모델 (Pydantic)
-│   ├── vault_scanner.py       # Vault 메타데이터 스캔
-│   ├── category_classifier.py # 카테고리 분류
-│   ├── template_manager.py    # 템플릿 관리
-│   ├── prompts.py             # 시스템 프롬프트
-│   ├── graph.py               # LangGraph 워크플로우
+│   ├── errors.py              # 사용자 친화적 에러
 │   ├── agent.py               # 에이전트 클래스
-│   ├── link_analyzer.py       # 노트 링크 분석 (Auto-Linking)
-│   ├── embedding_cache.py     # 임베딩 캐시 관리
-│   ├── utils.py               # 유틸리티 함수
-│   └── main.py                # CLI 진입점
+│   └── ...                    # 기타 모듈
+├── obsidian-ana-plugin/       # Obsidian 플러그인
+│   ├── main.ts                # 플러그인 진입점
+│   ├── api.ts                 # API 클라이언트
+│   ├── settings.ts            # 설정 UI
+│   ├── modal.ts               # 모달 다이얼로그
+│   └── styles.css             # 스타일
 ├── templates/                 # 노트 템플릿
-├── data/                      # 템플릿 DB & 캐시
-├── examples/                  # 예제 노트
-│   └── sample_note.txt        # 샘플 입력 노트
-├── tests/                     # 테스트
-├── pyproject.toml
-└── README.md
+├── Makefile                   # 빌드/설치 스크립트
+└── pyproject.toml
 ```
+
+## Obsidian 플러그인
+
+Obsidian 내에서 직접 ANA를 사용할 수 있는 플러그인입니다.
+
+### 설치
+
+```bash
+# 1. API 서버 시작 (터미널)
+ana serve
+
+# 2. 플러그인 빌드 (처음 한 번만)
+cd obsidian-ana-plugin
+npm install && npm run build
+
+# 3. 플러그인을 Vault에 복사
+mkdir -p ~/Obsidian/.obsidian/plugins/ana-atomic-note-architect
+cp main.js manifest.json styles.css ~/Obsidian/.obsidian/plugins/ana-atomic-note-architect/
+
+# 4. Obsidian 재시작 후 플러그인 활성화
+```
+
+### 사용법
+
+1. **서버 시작**: 터미널에서 `ana serve`
+2. **Obsidian 열기**: 노트를 열고 `Ctrl/Cmd + P`
+3. **명령 실행**: "ANA: Process Current Note" 선택
+4. **질문 답변**: 모달에서 질문에 답변
+5. **저장**: 미리보기 확인 후 저장
+
+### 사용 가능한 명령어
+
+| 명령어 | 설명 |
+|--------|------|
+| `ANA: Process Current Note` | 현재 노트 전체 처리 |
+| `ANA: Process Selected Text` | 선택한 텍스트만 처리 |
+| `ANA: Check Server Connection` | 서버 연결 확인 |
+
+
 
 ## LLM Provider 설정
 
