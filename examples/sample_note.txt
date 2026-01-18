@@ -1,0 +1,6 @@
+# Example raw note for testing ANA
+
+RAG는 Retrieval-Augmented Generation의 약자다.
+LLM의 환각(hallucination) 문제를 해결하기 위해 사용한다.
+
+이 방법이 더 효율적이다.
