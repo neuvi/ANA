@@ -235,10 +235,18 @@ def check_llm_provider() -> DiagnosticResult:
         
         valid_providers = ["openai", "anthropic", "ollama", "vllm"]
         if config.llm_provider in valid_providers:
+            # Get the correct model name based on provider
+            if config.llm_provider == "ollama":
+                model_name = config.ollama_model
+            elif config.llm_provider == "vllm":
+                model_name = config.vllm_model
+            else:
+                model_name = config.llm_model
+            
             return DiagnosticResult(
                 "LLM Provider",
                 "ok",
-                f"{config.llm_provider} (모델: {config.llm_model})"
+                f"{config.llm_provider} (모델: {model_name})"
             )
         else:
             return DiagnosticResult(
@@ -316,35 +324,18 @@ def check_api_keys() -> DiagnosticResult:
 
 
 def check_ollama() -> DiagnosticResult:
-    """Check Ollama installation and status."""
+    """Check Ollama installation and status.
+    
+    Supports both local installation and Docker-based Ollama.
+    """
     try:
         from src.config import ANAConfig
         config = ANAConfig()
         
-        # Only relevant for ollama provider
-        if config.llm_provider != "ollama" and config.embedding_model:
-            # Check if ollama is needed for embeddings
-            pass
-        
-        # Check if ollama command exists
+        # Check if ollama command exists locally
         ollama_path = shutil.which("ollama")
-        if not ollama_path:
-            if config.llm_provider == "ollama":
-                return DiagnosticResult(
-                    "Ollama",
-                    "error",
-                    "Ollama가 설치되지 않음",
-                    fix_hint="https://ollama.ai 에서 설치"
-                )
-            else:
-                return DiagnosticResult(
-                    "Ollama",
-                    "warning",
-                    "Ollama 미설치 (임베딩에 필요할 수 있음)",
-                    fix_hint="https://ollama.ai 에서 설치"
-                )
         
-        # Check if ollama is running
+        # Try API connection first (supports both local and Docker)
         try:
             import requests
             base_url = config.ollama_base_url
@@ -356,10 +347,11 @@ def check_ollama() -> DiagnosticResult:
                 # Check if required model is available
                 required_model = config.ollama_model if config.llm_provider == "ollama" else config.embedding_model
                 if any(required_model in name for name in model_names):
+                    source = "로컬" if ollama_path else "Docker/원격"
                     return DiagnosticResult(
                         "Ollama",
                         "ok",
-                        f"실행 중 (모델 {len(models)}개)"
+                        f"실행 중 - {source} (모델 {len(models)}개)"
                     )
                 else:
                     return DiagnosticResult(
@@ -376,12 +368,29 @@ def check_ollama() -> DiagnosticResult:
                     fix_hint="ollama serve 실행"
                 )
         except Exception:
-            return DiagnosticResult(
-                "Ollama",
-                "error",
-                "서버에 연결할 수 없음",
-                fix_hint="ollama serve 실행"
-            )
+            # API connection failed, check local installation
+            if not ollama_path:
+                if config.llm_provider == "ollama":
+                    return DiagnosticResult(
+                        "Ollama",
+                        "error",
+                        f"연결 불가 ({config.ollama_base_url})",
+                        fix_hint="로컬: ollama serve 실행 / Docker: 포트 매핑 확인 (-p 11434:11434)"
+                    )
+                else:
+                    return DiagnosticResult(
+                        "Ollama",
+                        "warning",
+                        "Ollama 미설치 (임베딩에 필요할 수 있음)",
+                        fix_hint="https://ollama.ai 에서 설치"
+                    )
+            else:
+                return DiagnosticResult(
+                    "Ollama",
+                    "error",
+                    "서버에 연결할 수 없음",
+                    fix_hint="ollama serve 실행"
+                )
             
     except Exception as e:
         return DiagnosticResult(
