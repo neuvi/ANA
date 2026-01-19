@@ -254,6 +254,34 @@ Return ONLY the Markdown template."""
 
 
 # =============================================================================
+# Tag Suggestion Prompt
+# =============================================================================
+
+TAG_SUGGESTION_PROMPT = """Based on the note content, suggest relevant tags.
+
+Existing tags in the vault (prioritize these for consistency):
+{existing_vault_tags}
+
+Note content:
+---
+{note_content}
+---
+
+Instructions:
+1. PRIORITIZE existing vault tags for consistency across the knowledge base
+2. Suggest new tags only if no existing tag fits well
+3. Use lowercase with hyphens (e.g., "machine-learning", "deep-learning")
+4. Tags should be specific enough to be useful but general enough to apply to multiple notes
+5. Maximum {max_tags} tags
+
+Respond in JSON format:
+{{
+    "suggested_tags": ["tag1", "tag2", "tag3"],
+    "reasoning": "Brief explanation of why these tags were chosen"
+}}"""
+
+
+# =============================================================================
 # Helper Functions
 # =============================================================================
 

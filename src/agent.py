@@ -14,6 +14,7 @@ from src.link_analyzer import LinkAnalyzer
 from src.llm_config import get_llm
 from src.logging_config import get_logger
 from src.schemas import AgentResponse, AgentState, AnalysisResult, BacklinkSuggestion, DraftNote, InteractionPayload
+from src.smart_tags import SmartTagManager, TagSuggestion
 from src.template_manager import TemplateManager
 from src.utils import save_note_to_file
 from src.validators import validate_raw_note, ValidationError
@@ -91,6 +92,13 @@ class AtomicNoteArchitect:
             llm=self.llm,
             auto_apply=True,
             min_confidence=0.6,
+        )
+        
+        # Initialize smart tag manager
+        self.smart_tags = SmartTagManager(
+            vault_scanner=self.vault_scanner,
+            config=self.config,
+            llm=self.llm,
         )
     
     def process(self, raw_note: str, frontmatter: dict[str, Any] | None = None) -> AgentResponse:
@@ -316,6 +324,30 @@ class AtomicNoteArchitect:
             True if category is new
         """
         return self.category_classifier.is_new_category(self._current_category)
+    
+    def get_smart_tag_suggestions(
+        self,
+        content: str,
+        existing_tags: list[str] | None = None,
+        max_tags: int = 5
+    ) -> list[TagSuggestion]:
+        """Get smart tag suggestions for content.
+        
+        Uses vault tags and AI to suggest relevant tags.
+        
+        Args:
+            content: Note content to analyze
+            existing_tags: Tags to exclude from suggestions
+            max_tags: Maximum number of suggestions
+            
+        Returns:
+            List of TagSuggestion objects
+        """
+        return self.smart_tags.suggest_tags(
+            content=content,
+            existing_tags=existing_tags or [],
+            max_tags=max_tags
+        )
     
     def _build_response(self, state: AgentState) -> AgentResponse:
         """Build AgentResponse from current state.

@@ -11,6 +11,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.agent import AtomicNoteArchitect
+from fastapi.responses import StreamingResponse
+
 from src.api.schemas import (
     AnswerRequest,
     AnalysisResult,
@@ -21,8 +23,17 @@ from src.api.schemas import (
     SaveRequest,
     SaveResponse,
     StatusResponse,
+    TagSuggestRequest,
+    TagNormalizeRequest,
+    TagSuggestResponse,
+    TagNormalizeResponse,
+    VaultTagsResponse,
+    TagSuggestion,
 )
 from src.config import ANAConfig
+from src.progress import ProgressTracker, ProcessingPhase, SSEEventGenerator
+from src.smart_tags import SmartTagManager
+from src.vault_scanner import VaultScanner
 
 
 # Session storage for active processing sessions
@@ -225,6 +236,196 @@ async def delete_session(session_id: str):
         del _sessions[session_id]
         return {"status": "ok", "message": "Session deleted"}
     raise HTTPException(status_code=404, detail="Session not found")
+
+
+# =============================================================================
+# Tag Routes
+# =============================================================================
+
+@api_router.get("/tags", response_model=VaultTagsResponse)
+async def get_vault_tags():
+    """Get all tags from the vault with usage counts."""
+    try:
+        config = ANAConfig()
+        vault_scanner = VaultScanner(config.get_vault_path())
+        smart_tags = SmartTagManager(vault_scanner, config)
+        
+        tags = smart_tags.get_all_tags()
+        
+        return VaultTagsResponse(
+            tags=tags,
+            total_unique=len(tags)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/tags/suggest", response_model=TagSuggestResponse)
+async def suggest_tags(request: TagSuggestRequest):
+    """Suggest tags for content based on vault tags and AI."""
+    try:
+        config = ANAConfig()
+        vault_scanner = VaultScanner(config.get_vault_path())
+        smart_tags = SmartTagManager(vault_scanner, config)
+        
+        suggestions = smart_tags.suggest_tags(
+            content=request.content,
+            existing_tags=request.existing_tags,
+            max_tags=request.max_tags
+        )
+        
+        return TagSuggestResponse(
+            suggestions=[
+                TagSuggestion(
+                    tag=s.tag,
+                    confidence=s.confidence,
+                    source=s.source,
+                    usage_count=s.usage_count
+                )
+                for s in suggestions
+            ]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/tags/normalize", response_model=TagNormalizeResponse)
+async def normalize_tags(request: TagNormalizeRequest):
+    """Normalize a list of tags."""
+    try:
+        config = ANAConfig()
+        vault_scanner = VaultScanner(config.get_vault_path())
+        smart_tags = SmartTagManager(vault_scanner, config)
+        
+        normalized = smart_tags.normalize_tags(request.tags)
+        
+        return TagNormalizeResponse(
+            original=request.tags,
+            normalized=normalized
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Streaming Routes
+# =============================================================================
+
+@api_router.post("/process/stream")
+async def process_note_stream(request: ProcessRequest):
+    """Process a note with SSE streaming for real-time progress updates.
+    
+    Returns Server-Sent Events (SSE) stream with progress updates.
+    Event types:
+    - progress: Processing progress update
+    - heartbeat: Keep-alive signal
+    - complete: Processing completed with result
+    - error: Processing error
+    """
+    import asyncio
+    import json
+    
+    async def event_generator():
+        sse = SSEEventGenerator(heartbeat_interval=5.0)
+        
+        try:
+            # Create new session
+            session_id = str(uuid.uuid4())
+            config = ANAConfig()
+            
+            # Progress callback that sends SSE events
+            async def send_progress(update):
+                await sse.send_update(update)
+            
+            # Create tracker with async callback  
+            tracker = ProgressTracker(async_callback=send_progress)
+            
+            # Send initial event
+            tracker.update(ProcessingPhase.INITIALIZING, 0.0, "처리 시작...")
+            await asyncio.sleep(0.1)  # Allow event to be sent
+            
+            # Initialize agent
+            tracker.update(ProcessingPhase.INITIALIZING, 0.5, "에이전트 초기화 중...")
+            agent = AtomicNoteArchitect(config)
+            await asyncio.sleep(0.1)
+            
+            # Process note (run in thread to not block)
+            tracker.update(ProcessingPhase.ANALYZING, 0.0, "노트 분석 중...")
+            
+            # Run blocking process in executor
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: agent.process(request.content, request.frontmatter)
+            )
+            
+            tracker.update(ProcessingPhase.ANALYZING, 1.0, "분석 완료")
+            
+            # Store session
+            _sessions[session_id] = {
+                "agent": agent,
+                "response": response,
+            }
+            
+            # Build API response
+            analysis = None
+            if response.analysis:
+                analysis = AnalysisResult(
+                    detected_concepts=response.analysis.detected_concepts,
+                    is_sufficient=response.analysis.is_sufficient,
+                    should_split=response.analysis.should_split,
+                    split_suggestions=response.analysis.split_suggestions or [],
+                    category=agent.get_category(),
+                )
+            
+            questions = []
+            if response.interaction and response.interaction.questions_to_user:
+                tracker.update(ProcessingPhase.GENERATING_QUESTIONS, 1.0, "질문 생성 완료")
+                categories = response.interaction.question_categories or []
+                for i, q in enumerate(response.interaction.questions_to_user):
+                    cat = categories[i] if i < len(categories) else "general"
+                    questions.append(Question(text=q, category=cat))
+            
+            draft = None
+            if response.draft_note:
+                tracker.update(ProcessingPhase.SYNTHESIZING, 1.0, "노트 합성 완료")
+                draft = DraftNote(
+                    title=response.draft_note.title,
+                    content=response.draft_note.content,
+                    frontmatter=response.draft_note.frontmatter or {},
+                )
+            
+            # Send completion
+            tracker.complete("처리 완료!")
+            
+            api_response = ProcessResponse(
+                session_id=session_id,
+                status=response.status,
+                analysis=analysis,
+                questions=questions,
+                draft_note=draft,
+            )
+            
+            await sse.send_complete(api_response.model_dump())
+            
+        except Exception as e:
+            await sse.send_error(str(e))
+        finally:
+            sse.close()
+        
+        # Yield all queued events
+        async for event in sse.generate():
+            yield event
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # =============================================================================
