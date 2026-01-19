@@ -2,22 +2,134 @@
 
 Provides flexible LLM provider selection based on configuration.
 Supports OpenAI, Anthropic, Ollama, and vLLM.
+Includes retry logic for resilient API calls.
 """
 
 import os
-from typing import TYPE_CHECKING
+import time
+from functools import wraps
+from typing import TYPE_CHECKING, TypeVar, Callable, Any
 
 from langchain_core.language_models import BaseChatModel
+
+from src.logging_config import get_logger
 
 if TYPE_CHECKING:
     from src.config import ANAConfig
 
+logger = get_logger("llm")
 
-def get_llm(config: "ANAConfig") -> BaseChatModel:
+T = TypeVar("T")
+
+
+def with_retry(
+    max_retries: int = 3,
+    backoff_factor: float = 1.5,
+    initial_delay: float = 1.0,
+    retryable_exceptions: tuple = (Exception,),
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """Retry decorator with exponential backoff.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        backoff_factor: Multiplier for delay between retries
+        initial_delay: Initial delay in seconds
+        retryable_exceptions: Tuple of exceptions to retry on
+        
+    Returns:
+        Decorated function with retry logic
+    """
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> T:
+            delay = initial_delay
+            last_exception = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except retryable_exceptions as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"Attempt {attempt + 1}/{max_retries + 1} failed: {e}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        time.sleep(delay)
+                        delay *= backoff_factor
+                    else:
+                        logger.error(f"All {max_retries + 1} attempts failed")
+            
+            raise last_exception
+        return wrapper
+    return decorator
+
+
+class RetryableLLM:
+    """Wrapper around LangChain LLM with built-in retry logic."""
+    
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        max_retries: int = 3,
+        backoff_factor: float = 1.5,
+    ):
+        """Initialize retryable LLM wrapper.
+        
+        Args:
+            llm: Underlying LangChain LLM
+            max_retries: Maximum retry attempts
+            backoff_factor: Exponential backoff multiplier
+        """
+        self._llm = llm
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+    
+    def invoke(self, *args, **kwargs) -> Any:
+        """Invoke LLM with retry logic."""
+        delay = 1.0
+        last_exception = None
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                return self._llm.invoke(*args, **kwargs)
+            except Exception as e:
+                last_exception = e
+                error_str = str(e).lower()
+                
+                # Don't retry on authentication errors
+                if "api key" in error_str or "authentication" in error_str:
+                    logger.error(f"Authentication error, not retrying: {e}")
+                    raise
+                
+                # Don't retry on validation errors
+                if "validation" in error_str or "invalid" in error_str:
+                    logger.error(f"Validation error, not retrying: {e}")
+                    raise
+                
+                if attempt < self.max_retries:
+                    logger.warning(
+                        f"LLM attempt {attempt + 1}/{self.max_retries + 1} failed: {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                    delay *= self.backoff_factor
+                else:
+                    logger.error(f"All {self.max_retries + 1} LLM attempts failed")
+        
+        raise last_exception
+    
+    def __getattr__(self, name):
+        """Proxy other attributes to underlying LLM."""
+        return getattr(self._llm, name)
+
+
+def get_llm(config: "ANAConfig", with_retries: bool = True) -> BaseChatModel:
     """Get LLM instance based on configuration.
     
     Args:
         config: ANA configuration instance
+        with_retries: Whether to wrap LLM with retry logic
         
     Returns:
         LangChain chat model instance
@@ -28,15 +140,20 @@ def get_llm(config: "ANAConfig") -> BaseChatModel:
     provider = config.llm_provider.lower()
     
     if provider == "openai":
-        return _get_openai_llm(config)
+        llm = _get_openai_llm(config)
     elif provider == "anthropic":
-        return _get_anthropic_llm(config)
+        llm = _get_anthropic_llm(config)
     elif provider == "ollama":
-        return _get_ollama_llm(config)
+        llm = _get_ollama_llm(config)
     elif provider == "vllm":
-        return _get_vllm_llm(config)
+        llm = _get_vllm_llm(config)
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
+    
+    if with_retries:
+        return RetryableLLM(llm, max_retries=3, backoff_factor=1.5)
+    
+    return llm
 
 
 def _get_openai_llm(config: "ANAConfig") -> BaseChatModel:
@@ -98,3 +215,4 @@ def _get_vllm_llm(config: "ANAConfig") -> BaseChatModel:
         api_key=os.getenv("VLLM_API_KEY", "not-needed"),
         temperature=config.llm_temperature,
     )
+

@@ -12,10 +12,14 @@ from src.embedding_cache import EmbeddingCache
 from src.graph import build_graph, continue_with_answers, create_initial_state
 from src.link_analyzer import LinkAnalyzer
 from src.llm_config import get_llm
+from src.logging_config import get_logger
 from src.schemas import AgentResponse, AgentState, AnalysisResult, BacklinkSuggestion, DraftNote, InteractionPayload
 from src.template_manager import TemplateManager
 from src.utils import save_note_to_file
+from src.validators import validate_raw_note, ValidationError
 from src.vault_scanner import VaultScanner
+
+logger = get_logger("agent")
 
 
 class AtomicNoteArchitect:
@@ -98,7 +102,18 @@ class AtomicNoteArchitect:
             
         Returns:
             AgentResponse with status, analysis, and current draft
+            
+        Raises:
+            ValidationError: If raw note fails validation
         """
+        # Validate raw note
+        validation = validate_raw_note(raw_note)
+        if not validation.is_valid:
+            raise ValidationError(validation.message, field="raw_note")
+        
+        for warning in validation.warnings:
+            logger.warning(f"Note validation warning: {warning}")
+        
         # Extract frontmatter if not provided
         if frontmatter is None:
             frontmatter = self.vault_scanner.parse_frontmatter(raw_note) or {}
@@ -107,6 +122,7 @@ class AtomicNoteArchitect:
         self._current_category, is_new = self.category_classifier.suggest_category(
             raw_note, frontmatter
         )
+        logger.debug(f"Classified category: {self._current_category} (new: {is_new})")
         
         # Get template
         sample_notes = None
@@ -118,6 +134,7 @@ class AtomicNoteArchitect:
         self._current_template, self._template_source = self.template_manager.get_template(
             self._current_category, sample_notes
         )
+        logger.debug(f"Using template from: {self._template_source}")
         
         # Create initial state
         self._current_state = create_initial_state(
@@ -264,7 +281,7 @@ class AtomicNoteArchitect:
                 
                 return extracted, key_points
         except Exception as e:
-            pass
+            logger.warning(f"Failed to extract split content: {e}")
         
         # Fallback: return topic as prompt for user
         return f"# {target_topic}\n\n(Extracted from original note)", []
@@ -389,8 +406,6 @@ class AtomicNoteArchitect:
                     final_note.frontmatter["related"] = final_note.related_notes
                     
                 except Exception as e:
-                    from src.logging_config import get_logger
-                    logger = get_logger("agent")
                     logger.warning(f"Note linking failed: {e}")
         else:
             status = "needs_info"

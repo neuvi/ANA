@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from src.logging_config import get_logger
+
+logger = get_logger("template")
+
 if TYPE_CHECKING:
     from src.config import ANAConfig
     from src.vault_scanner import VaultScanner
@@ -127,8 +131,8 @@ class TemplateManager:
         if template_file.exists():
             try:
                 return template_file.read_text(encoding="utf-8")
-            except IOError:
-                pass
+            except IOError as e:
+                logger.warning(f"Failed to read template file {template_file}: {e}")
         
         # Try without underscores/hyphens normalization
         normalized = category.replace("-", "_")
@@ -136,16 +140,16 @@ class TemplateManager:
         if template_file.exists():
             try:
                 return template_file.read_text(encoding="utf-8")
-            except IOError:
-                pass
+            except IOError as e:
+                logger.warning(f"Failed to read template file {template_file}: {e}")
         
         # Try default template
         default_file = self.templates_dir / "default_template.md"
         if default_file.exists():
             try:
                 return default_file.read_text(encoding="utf-8")
-            except IOError:
-                pass
+            except IOError as e:
+                logger.warning(f"Failed to read default template: {e}")
         
         return None
     
@@ -234,8 +238,7 @@ class TemplateManager:
             with open(self.db_path, "w", encoding="utf-8") as f:
                 json.dump(self._db, f, ensure_ascii=False, indent=2)
         except IOError as e:
-            # Log error but don't fail
-            print(f"Warning: Could not save template DB: {e}")
+            logger.warning(f"Could not save template DB to {self.db_path}: {e}")
     
     def _load_db(self) -> dict[str, str]:
         """Load template DB from file.
@@ -249,8 +252,8 @@ class TemplateManager:
                     data = json.load(f)
                     if isinstance(data, dict):
                         return data
-            except (IOError, json.JSONDecodeError):
-                pass
+            except (IOError, json.JSONDecodeError) as e:
+                logger.warning(f"Failed to load template DB from {self.db_path}: {e}")
         return {}
     
     def list_available_templates(self) -> dict[str, str]:

@@ -12,6 +12,10 @@ from typing import Any
 
 import requests
 
+from src.logging_config import get_logger
+
+logger = get_logger("embedding")
+
 
 class EmbeddingCache:
     """Embedding cache with vault-based storage and incremental updates.
@@ -87,7 +91,8 @@ class EmbeddingCache:
         if content is None:
             try:
                 content = file_path.read_text(encoding="utf-8")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to read file {file_path}: {e}")
                 return None
         
         # Compute content hash
@@ -193,7 +198,8 @@ class EmbeddingCache:
                         stats["failed"] += 1
                 else:
                     stats["cached"] += 1
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to process {file_path}: {e}")
                 stats["failed"] += 1
         
         # Commit all pending changes after sync
@@ -336,26 +342,67 @@ class EmbeddingCache:
         except ValueError:
             return str(file_path)
     
-    def _create_embedding(self, content: str) -> list[float] | None:
-        """Create embedding using Ollama API."""
-        try:
-            # Truncate content if too long
-            text = content[:8000]  # ~2000 tokens
+    def _create_embedding(
+        self,
+        content: str,
+        max_retries: int = 3,
+        backoff_factor: float = 1.5
+    ) -> list[float] | None:
+        """Create embedding using Ollama API with retry logic.
+        
+        Args:
+            content: Text content to embed
+            max_retries: Maximum retry attempts
+            backoff_factor: Exponential backoff multiplier
             
-            response = requests.post(
-                f"{self.ollama_base_url}/api/embeddings",
-                json={
-                    "model": self.embedding_model,
-                    "prompt": text
-                },
-                timeout=60
-            )
+        Returns:
+            Embedding vector or None if all attempts fail
+        """
+        import time
+        
+        # Truncate content if too long
+        text = content[:8000]  # ~2000 tokens
+        delay = 1.0
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.post(
+                    f"{self.ollama_base_url}/api/embeddings",
+                    json={
+                        "model": self.embedding_model,
+                        "prompt": text
+                    },
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get("embedding")
+                elif response.status_code == 503:
+                    # Service unavailable, retry
+                    logger.warning(f"Ollama service unavailable (attempt {attempt + 1}/{max_retries + 1})")
+                else:
+                    logger.warning(f"Ollama embedding API returned status {response.status_code}")
+                    return None  # Don't retry on other status codes
+                    
+            except requests.exceptions.Timeout:
+                last_exception = "Timeout"
+                logger.warning(f"Ollama embedding request timed out (attempt {attempt + 1}/{max_retries + 1})")
+            except requests.exceptions.ConnectionError:
+                last_exception = "ConnectionError"
+                logger.warning(f"Cannot connect to Ollama at {self.ollama_base_url} (attempt {attempt + 1}/{max_retries + 1})")
+            except Exception as e:
+                last_exception = str(e)
+                logger.warning(f"Failed to create embedding (attempt {attempt + 1}/{max_retries + 1}): {e}")
             
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("embedding")
-        except Exception:
-            pass
+            # Retry with backoff
+            if attempt < max_retries:
+                time.sleep(delay)
+                delay *= backoff_factor
+        
+        if last_exception:
+            logger.error(f"All {max_retries + 1} embedding attempts failed: {last_exception}")
         
         return None
     
@@ -394,7 +441,8 @@ class EmbeddingCache:
             try:
                 with open(self.embeddings_file, "r", encoding="utf-8") as f:
                     self._embeddings = json.load(f)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to load embeddings cache: {e}")
                 self._embeddings = {}
         
         # Load metadata
@@ -402,7 +450,8 @@ class EmbeddingCache:
             try:
                 with open(self.meta_file, "r", encoding="utf-8") as f:
                     self._meta = json.load(f)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to load metadata cache: {e}")
                 self._meta = {}
     
     def _save_cache(self):
@@ -413,15 +462,15 @@ class EmbeddingCache:
         try:
             with open(self.embeddings_file, "w", encoding="utf-8") as f:
                 json.dump(self._embeddings, f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to save embeddings to {self.embeddings_file}: {e}")
         
         # Save metadata
         try:
             with open(self.meta_file, "w", encoding="utf-8") as f:
                 json.dump(self._meta, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to save metadata to {self.meta_file}: {e}")
     
     # =========================================================================
     # Vector DB Methods (Optional Chroma Backend)

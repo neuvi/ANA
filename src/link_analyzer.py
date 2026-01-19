@@ -10,6 +10,10 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.logging_config import get_logger
+
+logger = get_logger("link_analyzer")
+
 if TYPE_CHECKING:
     from src.embedding_cache import EmbeddingCache
     from src.vault_scanner import VaultScanner
@@ -248,7 +252,8 @@ class LinkAnalyzer:
             scores = reranker.predict(pairs)
             results = list(zip(valid_candidates, scores))
             return sorted(results, key=lambda x: x[1], reverse=True)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Reranking failed, using fallback order: {e}")
             return [(c, 1.0) for c in valid_candidates]
     
     def _get_reranker(self):
@@ -267,11 +272,17 @@ class LinkAnalyzer:
                 local_path = Path("data/models/rerank") / model_folder
                 
                 if local_path.exists():
+                    logger.debug(f"Loading reranker from local path: {local_path}")
                     self._reranker = CrossEncoder(str(local_path))
                 else:
                     # Fall back to HuggingFace (will download to cache)
+                    logger.debug(f"Loading reranker from HuggingFace: {self.rerank_model}")
                     self._reranker = CrossEncoder(self.rerank_model)
             except ImportError:
+                logger.warning("sentence-transformers not installed, reranking disabled")
+                return None
+            except Exception as e:
+                logger.error(f"Failed to load reranker model: {e}")
                 return None
         return self._reranker
     

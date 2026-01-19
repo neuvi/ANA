@@ -3,11 +3,17 @@
 Manages all configuration settings including Vault path, LLM settings, and agent parameters.
 """
 
+import re
+import warnings
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from src.logging_config import get_logger
+
+logger = get_logger("config")
 
 
 class ANAConfig(BaseSettings):
@@ -162,6 +168,56 @@ class ANAConfig(BaseSettings):
         description="Enable Chroma vector DB backend"
     )
     
+    # =========================================================================
+    # Validators
+    # =========================================================================
+    
+    @field_validator('ollama_base_url', 'vllm_base_url')
+    @classmethod
+    def validate_base_url(cls, v: str) -> str:
+        """Validate base URL format."""
+        url_pattern = re.compile(
+            r'^https?://'  # http:// or https://
+            r'(?:[a-zA-Z0-9.-]+|\d{1,3}(?:\.\d{1,3}){3})'  # domain or IP
+            r'(?::\d+)?'  # optional port
+            r'(?:/.*)?$'  # optional path
+        )
+        if not url_pattern.match(v):
+            raise ValueError(f"Invalid URL format: {v}")
+        return v.rstrip('/')  # Remove trailing slash for consistency
+    
+    @field_validator('output_language')
+    @classmethod
+    def validate_output_language(cls, v: str) -> str:
+        """Validate output language code."""
+        valid_languages = {'ko', 'en', 'ja', 'zh'}
+        if v.lower() not in valid_languages:
+            warnings.warn(f"Unsupported language '{v}', defaulting to 'ko'")
+            return 'ko'
+        return v.lower()
+    
+    @field_validator('llm_model')
+    @classmethod
+    def validate_llm_model(cls, v: str) -> str:
+        """Validate LLM model name is not empty."""
+        if not v or not v.strip():
+            raise ValueError("LLM model name cannot be empty")
+        return v.strip()
+    
+    @model_validator(mode='after')
+    def validate_vault_path_warning(self) -> 'ANAConfig':
+        """Warn if vault path doesn't exist (don't fail - might be first run)."""
+        expanded_path = self.vault_path.expanduser().resolve()
+        if not expanded_path.exists():
+            logger.warning(f"Vault path does not exist: {expanded_path}")
+        elif not (expanded_path / ".obsidian").exists():
+            logger.debug(f"No .obsidian folder found in vault: {expanded_path}")
+        return self
+    
+    # =========================================================================
+    # Helper Methods
+    # =========================================================================
+    
     def get_vault_path(self) -> Path:
         """Get expanded vault path."""
         return self.vault_path.expanduser().resolve()
@@ -173,8 +229,17 @@ class ANAConfig(BaseSettings):
     def get_template_db_path(self) -> Path:
         """Get expanded template database path."""
         return self.template_db_path.expanduser().resolve()
+    
+    def get_effective_model(self) -> str:
+        """Get the effective model name based on provider."""
+        if self.llm_provider == "ollama":
+            return self.ollama_model
+        elif self.llm_provider == "vllm":
+            return self.vllm_model
+        return self.llm_model
 
 
 def get_config() -> ANAConfig:
     """Get configuration instance."""
     return ANAConfig()
+

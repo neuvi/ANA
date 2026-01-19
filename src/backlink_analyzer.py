@@ -12,7 +12,10 @@ from typing import TYPE_CHECKING
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from src.logging_config import get_logger
 from src.schemas import BacklinkSuggestion, DraftNote
+
+logger = get_logger("backlink")
 
 if TYPE_CHECKING:
     from src.vault_scanner import VaultScanner
@@ -118,7 +121,8 @@ class BacklinkAnalyzer:
             # Get note content
             try:
                 content = note_path.read_text(encoding="utf-8")
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to read note {note_path}: {e}")
                 continue
             
             # Skip if new note is already linked
@@ -175,7 +179,8 @@ class BacklinkAnalyzer:
                 if modified_content != content:
                     note_path.write_text(modified_content, encoding="utf-8")
                     modified_files.append(note_path)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to apply backlink to {note_path}: {e}")
                 continue
         
         return modified_files
@@ -283,7 +288,8 @@ class BacklinkAnalyzer:
                     confidence=sugg.get("confidence", 0.5),
                     reason=sugg.get("reason", ""),
                 ))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"LLM analysis failed, using fallback: {e}")
             # Fallback: simple keyword matching
             suggestions = self._simple_match(
                 content, note_path, note_title, new_note, key_concepts
