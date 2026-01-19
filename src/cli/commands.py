@@ -325,8 +325,16 @@ def _process_single_split_note(
     agent.reset()
 
 
-def run_sync_command(force: bool = False, debug: bool = False) -> None:
-    """Run the sync command."""
+def run_sync_command(force: bool = False, debug: bool = False, use_async: bool = True) -> None:
+    """Run the sync command.
+    
+    Args:
+        force: Force re-sync all embeddings
+        debug: Enable debug output
+        use_async: Use async parallel processing (default: True)
+    """
+    import asyncio
+    
     console.print(Panel.fit(
         "[bold blue]🔄 ANA - Embedding Sync[/bold blue]\n"
         "[dim]Synchronize embeddings for vault notes[/dim]",
@@ -345,13 +353,23 @@ def run_sync_command(force: bool = False, debug: bool = False) -> None:
         progress.add_task("Initializing agent...", total=None)
         agent = AtomicNoteArchitect(config)
     
-    print_info("Scanning vault and updating embeddings...")
+    if use_async:
+        print_info("Scanning vault and updating embeddings (async mode)...")
+    else:
+        print_info("Scanning vault and updating embeddings...")
     
     def progress_callback(current: int, total: int, file_name: str) -> None:
         console.print(f"  [{current}/{total}] {file_name}", highlight=False)
     
     try:
-        stats = agent.sync_embeddings(progress_callback=progress_callback)
+        if use_async:
+            # Use async version for parallel processing
+            stats = asyncio.run(
+                agent.sync_embeddings_async(progress_callback=progress_callback)
+            )
+        else:
+            # Fallback to synchronous version
+            stats = agent.sync_embeddings(progress_callback=progress_callback)
         
         console.print()
         console.print(Panel(

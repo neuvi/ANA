@@ -444,6 +444,28 @@ class AtomicNoteArchitect:
             self.vault_scanner,
             progress_callback
         )
+    
+    async def sync_embeddings_async(
+        self,
+        progress_callback=None,
+        max_concurrency: int = 5
+    ) -> dict[str, int]:
+        """Sync embeddings asynchronously for all notes in the vault.
+        
+        Uses parallel processing for improved performance.
+        
+        Args:
+            progress_callback: Optional callback(current, total, file_name)
+            max_concurrency: Maximum concurrent embedding requests
+            
+        Returns:
+            Stats dict with 'updated', 'cached', 'failed' counts
+        """
+        return await self.embedding_cache.sync_vault_async(
+            self.vault_scanner,
+            progress_callback,
+            max_concurrency
+        )
 
 
 def create_agent(config: ANAConfig | None = None) -> AtomicNoteArchitect:

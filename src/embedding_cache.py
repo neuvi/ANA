@@ -4,12 +4,14 @@ Manages embedding vectors with persistent storage in Obsidian Vault.
 Supports incremental updates based on file content hash.
 """
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import requests
 
 from src.logging_config import get_logger
@@ -602,3 +604,290 @@ class EmbeddingCache:
         
         return count
 
+    # =========================================================================
+    # Async Methods
+    # =========================================================================
+    
+    async def _create_embedding_async(
+        self,
+        content: str,
+        session: aiohttp.ClientSession | None = None,
+        max_retries: int = 3,
+        backoff_factor: float = 1.5
+    ) -> list[float] | None:
+        """Create embedding using Ollama API asynchronously with retry logic.
+        
+        Args:
+            content: Text content to embed
+            session: Optional aiohttp session (creates one if not provided)
+            max_retries: Maximum retry attempts
+            backoff_factor: Exponential backoff multiplier
+            
+        Returns:
+            Embedding vector or None if all attempts fail
+        """
+        # Truncate content if too long
+        text = content[:8000]  # ~2000 tokens
+        delay = 1.0
+        last_exception = None
+        
+        close_session = False
+        if session is None:
+            session = aiohttp.ClientSession()
+            close_session = True
+        
+        try:
+            for attempt in range(max_retries + 1):
+                try:
+                    async with session.post(
+                        f"{self.ollama_base_url}/api/embeddings",
+                        json={
+                            "model": self.embedding_model,
+                            "prompt": text
+                        },
+                        timeout=aiohttp.ClientTimeout(total=60)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            return data.get("embedding")
+                        elif response.status == 503:
+                            logger.warning(f"Ollama service unavailable (attempt {attempt + 1}/{max_retries + 1})")
+                        else:
+                            logger.warning(f"Ollama embedding API returned status {response.status}")
+                            return None  # Don't retry on other status codes
+                            
+                except asyncio.TimeoutError:
+                    last_exception = "Timeout"
+                    logger.warning(f"Ollama embedding request timed out (attempt {attempt + 1}/{max_retries + 1})")
+                except aiohttp.ClientConnectorError:
+                    last_exception = "ConnectionError"
+                    logger.warning(f"Cannot connect to Ollama at {self.ollama_base_url} (attempt {attempt + 1}/{max_retries + 1})")
+                except Exception as e:
+                    last_exception = str(e)
+                    logger.warning(f"Failed to create embedding (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                
+                # Retry with backoff
+                if attempt < max_retries:
+                    await asyncio.sleep(delay)
+                    delay *= backoff_factor
+            
+            if last_exception:
+                logger.error(f"All {max_retries + 1} async embedding attempts failed: {last_exception}")
+            
+            return None
+        finally:
+            if close_session:
+                await session.close()
+    
+    async def get_or_create_async(
+        self,
+        file_path: Path,
+        content: str | None = None,
+        session: aiohttp.ClientSession | None = None
+    ) -> list[float] | None:
+        """Get embedding from cache or create new one asynchronously.
+        
+        Args:
+            file_path: Path to the note file
+            content: Optional content (will read from file if not provided)
+            session: Optional aiohttp session for connection reuse
+            
+        Returns:
+            Embedding vector or None if failed
+        """
+        if content is None:
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Failed to read file {file_path}: {e}")
+                return None
+        
+        # Compute content hash
+        file_hash = self._compute_hash(content)
+        rel_path = self._get_relative_path(file_path)
+        
+        # Check cache
+        if rel_path in self._meta:
+            cached = self._meta[rel_path]
+            if cached.get("hash") == file_hash:
+                # Hash matches, use cached embedding
+                embed_key = cached.get("embedding_key")
+                if embed_key and embed_key in self._embeddings:
+                    return self._embeddings[embed_key]
+        
+        # Need to create new embedding
+        embedding = await self._create_embedding_async(content, session)
+        if embedding:
+            self._save_embedding(rel_path, embedding, file_hash)
+            # Add to vector DB if enabled
+            if self._vector_db is not None:
+                self._add_to_vector_db(rel_path, embedding, content)
+        
+        return embedding
+    
+    async def batch_create_embeddings_async(
+        self,
+        items: list[tuple[Path, str]],
+        progress_callback=None,
+        max_concurrency: int = 5
+    ) -> dict[str, list[float]]:
+        """Create embeddings in parallel using asyncio.
+        
+        Args:
+            items: List of (file_path, content) tuples
+            progress_callback: Optional callback(current, total, file_name)
+            max_concurrency: Maximum concurrent requests (default: 5)
+            
+        Returns:
+            Dict of path -> embedding
+        """
+        results: dict[str, list[float]] = {}
+        total = len(items)
+        completed = 0
+        
+        # Semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(max_concurrency)
+        
+        async def process_item(
+            file_path: Path,
+            content: str,
+            session: aiohttp.ClientSession
+        ) -> tuple[str, list[float] | None]:
+            nonlocal completed
+            
+            async with semaphore:
+                file_hash = self._compute_hash(content)
+                rel_path = self._get_relative_path(file_path)
+                
+                # Check if update needed
+                if rel_path in self._meta and self._meta[rel_path].get("hash") == file_hash:
+                    embed_key = self._meta[rel_path].get("embedding_key")
+                    if embed_key and embed_key in self._embeddings:
+                        completed += 1
+                        if progress_callback:
+                            progress_callback(completed, total, file_path.name)
+                        return rel_path, self._embeddings[embed_key]
+                
+                # Create new embedding
+                embedding = await self._create_embedding_async(content, session)
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, total, file_path.name)
+                
+                if embedding:
+                    self._save_embedding(rel_path, embedding, file_hash)
+                    # Add to vector DB if enabled
+                    if self._vector_db is not None:
+                        self._add_to_vector_db(rel_path, embedding, content)
+                
+                return rel_path, embedding
+        
+        # Create session and run tasks
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                process_item(file_path, content, session)
+                for file_path, content in items
+            ]
+            
+            for coro in asyncio.as_completed(tasks):
+                rel_path, embedding = await coro
+                if embedding:
+                    results[rel_path] = embedding
+        
+        # Commit after batch
+        self.commit()
+        
+        return results
+    
+    async def sync_vault_async(
+        self,
+        vault_scanner,
+        progress_callback=None,
+        max_concurrency: int = 5
+    ) -> dict[str, int]:
+        """Sync embeddings for entire vault asynchronously.
+        
+        Uses parallel processing for improved performance.
+        
+        Args:
+            vault_scanner: VaultScanner instance
+            progress_callback: Optional callback(current, total, file_name)
+            max_concurrency: Maximum concurrent embedding requests
+            
+        Returns:
+            Stats dict with 'updated', 'cached', 'failed' counts
+        """
+        stats = {"updated": 0, "cached": 0, "failed": 0}
+        
+        notes = vault_scanner.scan_all_notes()
+        total = len(notes)
+        
+        # Prepare items that need processing
+        items_to_process: list[tuple[Path, str]] = []
+        
+        for note in notes:
+            file_path = note["path"]
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                if self.needs_update(file_path, content):
+                    items_to_process.append((file_path, content))
+                else:
+                    stats["cached"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to read {file_path}: {e}")
+                stats["failed"] += 1
+        
+        if not items_to_process:
+            if progress_callback:
+                progress_callback(total, total, "All cached")
+            return stats
+        
+        # Process items in parallel
+        semaphore = asyncio.Semaphore(max_concurrency)
+        processed = stats["cached"]
+        
+        async def process_single(
+            file_path: Path,
+            content: str,
+            session: aiohttp.ClientSession
+        ) -> bool:
+            nonlocal processed
+            
+            async with semaphore:
+                embedding = await self._create_embedding_async(content, session)
+                processed += 1
+                
+                if progress_callback:
+                    progress_callback(processed, total, file_path.name)
+                
+                if embedding:
+                    file_hash = self._compute_hash(content)
+                    rel_path = self._get_relative_path(file_path)
+                    self._save_embedding(rel_path, embedding, file_hash)
+                    
+                    if self._vector_db is not None:
+                        self._add_to_vector_db(rel_path, embedding, content)
+                    return True
+                return False
+        
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                process_single(file_path, content, session)
+                for file_path, content in items_to_process
+            ]
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in results:
+                if isinstance(result, Exception):
+                    stats["failed"] += 1
+                    logger.warning(f"Async embedding failed: {result}")
+                elif result:
+                    stats["updated"] += 1
+                else:
+                    stats["failed"] += 1
+        
+        # Commit all pending changes
+        self.commit()
+        
+        return stats

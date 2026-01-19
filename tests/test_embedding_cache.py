@@ -257,3 +257,115 @@ def temp_vault(tmp_path):
 def embedding_cache(temp_vault):
     """Create EmbeddingCache instance."""
     return EmbeddingCache(vault_path=temp_vault)
+
+
+class TestAsyncMethods:
+    """Test async embedding methods."""
+    
+    @pytest.mark.asyncio
+    async def test_create_embedding_async_success(self, embedding_cache):
+        """Test successful async embedding creation."""
+        import aiohttp
+        from unittest.mock import AsyncMock, patch, MagicMock
+        
+        # Mock the aiohttp ClientSession
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={"embedding": [0.1, 0.2, 0.3]})
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_response)
+        mock_session.close = AsyncMock()
+        
+        result = await embedding_cache._create_embedding_async(
+            "test content",
+            session=mock_session
+        )
+        
+        assert result == [0.1, 0.2, 0.3]
+    
+    @pytest.mark.asyncio
+    async def test_create_embedding_async_retry_on_timeout(self, embedding_cache):
+        """Test that async embedding retries on timeout."""
+        import aiohttp
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from contextlib import asynccontextmanager
+        
+        # Create a mock that raises TimeoutError first, then succeeds
+        call_count = 0
+        
+        @asynccontextmanager
+        async def mock_post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise asyncio.TimeoutError()
+            
+            mock_resp = MagicMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(return_value={"embedding": [0.1]})
+            yield mock_resp
+        
+        mock_session = MagicMock()
+        mock_session.post = mock_post
+        mock_session.close = AsyncMock()
+        
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await embedding_cache._create_embedding_async(
+                "test content",
+                session=mock_session
+            )
+        
+        assert result == [0.1]
+        assert call_count == 3
+    
+    @pytest.mark.asyncio
+    async def test_get_or_create_async_cached(self, embedding_cache, temp_vault):
+        """Test getting cached embedding asynchronously."""
+        file_path = temp_vault / "cached.md"
+        content = "Cached content async"
+        file_path.write_text(content)
+        
+        # Pre-populate cache
+        rel_path = str(file_path.relative_to(temp_vault))
+        file_hash = embedding_cache._compute_hash(content)
+        embedding_cache._embeddings["cached_key_async"] = [0.4, 0.5, 0.6]
+        embedding_cache._meta[rel_path] = {
+            "hash": file_hash,
+            "embedding_key": "cached_key_async"
+        }
+        
+        result = await embedding_cache.get_or_create_async(file_path, content)
+        
+        assert result == [0.4, 0.5, 0.6]
+    
+    @pytest.mark.asyncio
+    async def test_batch_create_embeddings_async(self, embedding_cache, temp_vault):
+        """Test batch async embedding creation."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        
+        # Create test files
+        files = []
+        for i in range(3):
+            file_path = temp_vault / f"batch_{i}.md"
+            file_path.write_text(f"Content {i}")
+            files.append((file_path, f"Content {i}"))
+        
+        # Mock the async embedding creation
+        with patch.object(
+            embedding_cache,
+            "_create_embedding_async",
+            new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = [0.1, 0.2, 0.3]
+            
+            results = await embedding_cache.batch_create_embeddings_async(
+                files,
+                max_concurrency=2
+            )
+        
+        assert len(results) == 3
+        assert mock_create.call_count == 3
