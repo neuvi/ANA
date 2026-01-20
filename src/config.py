@@ -169,6 +169,34 @@ class ANAConfig(BaseSettings):
     )
     
     # =========================================================================
+    # Custom Prompt Settings
+    # =========================================================================
+    custom_prompts_dir: Path | None = Field(
+        default=None,
+        description="Directory for custom prompt files (contains system.txt, analysis.txt, etc.)"
+    )
+    custom_system_prompt: Path | None = Field(
+        default=None,
+        description="Path to custom system prompt file"
+    )
+    custom_analysis_prompt: Path | None = Field(
+        default=None,
+        description="Path to custom analysis prompt file"
+    )
+    custom_interrogation_prompt: Path | None = Field(
+        default=None,
+        description="Path to custom interrogation prompt file"
+    )
+    custom_synthesis_prompt: Path | None = Field(
+        default=None,
+        description="Path to custom synthesis prompt file"
+    )
+    custom_tag_suggestion_prompt: Path | None = Field(
+        default=None,
+        description="Path to custom tag suggestion prompt file"
+    )
+    
+    # =========================================================================
     # Validators
     # =========================================================================
     

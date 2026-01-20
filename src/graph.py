@@ -14,13 +14,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 
 from src.prompts import (
-    ANALYSIS_PROMPT,
-    INTERROGATION_PROMPT,
-    SYNTHESIS_PROMPT,
-    SYSTEM_PROMPT,
     format_metadata,
     format_qa_pairs,
 )
+from src.prompt_manager import PromptManager
 from src.schemas import (
     AgentState,
     AnalysisResult,
@@ -35,6 +32,7 @@ def build_graph(
     vault_scanner: VaultScanner | None = None,
     max_questions: int = 5,
     max_iterations: int = 3,
+    prompt_manager: PromptManager | None = None,
 ) -> StateGraph:
     """Build the LangGraph workflow.
     
@@ -43,10 +41,14 @@ def build_graph(
         vault_scanner: Optional vault scanner for metadata extraction
         max_questions: Maximum questions per round
         max_iterations: Maximum question rounds
+        prompt_manager: Optional prompt manager for custom prompts
         
     Returns:
         Compiled StateGraph
     """
+    # Initialize prompt manager if not provided
+    if prompt_manager is None:
+        prompt_manager = PromptManager()
     
     # =========================================================================
     # Node Functions
@@ -76,13 +78,13 @@ def build_graph(
         if user_answers:
             context += "\n\n[Previous Answers]\n" + "\n".join(user_answers)
         
-        prompt = ANALYSIS_PROMPT.format(
+        prompt = prompt_manager.get_analysis_prompt().format(
             existing_metadata=format_metadata(metadata),
             raw_note=context
         )
         
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
+            SystemMessage(content=prompt_manager.get_system_prompt()),
             HumanMessage(content=prompt)
         ]
         
@@ -137,7 +139,7 @@ def build_graph(
                 )
             }
         
-        prompt = INTERROGATION_PROMPT.format(
+        prompt = prompt_manager.get_interrogation_prompt().format(
             detected_concepts=", ".join(analysis.detected_concepts),
             missing_context=", ".join(analysis.missing_context),
             detected_category=analysis.detected_category or "unknown",
@@ -147,7 +149,7 @@ def build_graph(
         )
         
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
+            SystemMessage(content=prompt_manager.get_system_prompt()),
             HumanMessage(content=prompt)
         ]
         
@@ -204,7 +206,7 @@ def build_graph(
                 user_answers
             )
         
-        prompt = SYNTHESIS_PROMPT.format(
+        prompt = prompt_manager.get_synthesis_prompt().format(
             raw_note=raw_note,
             existing_metadata=format_metadata(metadata),
             qa_pairs=qa_pairs or "No additional questions were asked.",
@@ -213,7 +215,7 @@ def build_graph(
         )
         
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
+            SystemMessage(content=prompt_manager.get_system_prompt()),
             HumanMessage(content=prompt)
         ]
         

@@ -13,6 +13,7 @@ from src.graph import build_graph, continue_with_answers, create_initial_state
 from src.link_analyzer import LinkAnalyzer
 from src.llm_config import get_llm
 from src.logging_config import get_logger
+from src.prompt_manager import PromptManager
 from src.schemas import AgentResponse, AgentState, AnalysisResult, BacklinkSuggestion, DraftNote, InteractionPayload
 from src.smart_tags import SmartTagManager, TagSuggestion
 from src.template_manager import TemplateManager
@@ -71,12 +72,16 @@ class AtomicNoteArchitect:
             rerank_model=self.config.rerank_model,
         )
         
+        # Initialize prompt manager
+        self.prompt_manager = PromptManager(self.config)
+        
         # Build the graph
         self.graph = build_graph(
             self.llm,
             self.vault_scanner,
             max_questions=self.config.max_questions,
             max_iterations=self.config.max_iterations,
+            prompt_manager=self.prompt_manager,
         )
         
         # Current processing state
@@ -99,6 +104,7 @@ class AtomicNoteArchitect:
             vault_scanner=self.vault_scanner,
             config=self.config,
             llm=self.llm,
+            prompt_manager=self.prompt_manager,
         )
     
     def process(self, raw_note: str, frontmatter: dict[str, Any] | None = None) -> AgentResponse:

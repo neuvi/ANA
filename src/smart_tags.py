@@ -13,6 +13,7 @@ from src.logging_config import get_logger
 
 if TYPE_CHECKING:
     from src.config import ANAConfig
+    from src.prompt_manager import PromptManager
     from src.vault_scanner import VaultScanner
 
 logger = get_logger("smart_tags")
@@ -76,6 +77,7 @@ class SmartTagManager:
         vault_scanner: "VaultScanner",
         config: "ANAConfig",
         llm=None,
+        prompt_manager: "PromptManager | None" = None,
     ):
         """Initialize smart tag manager.
         
@@ -83,10 +85,12 @@ class SmartTagManager:
             vault_scanner: VaultScanner instance
             config: ANA configuration
             llm: Optional LLM for AI-powered suggestions
+            prompt_manager: Optional prompt manager for custom prompts
         """
         self.vault_scanner = vault_scanner
         self.config = config
         self.llm = llm
+        self.prompt_manager = prompt_manager
         
         # Cache for vault tags
         self._tag_cache: dict[str, int] | None = None
@@ -317,11 +321,16 @@ class SmartTagManager:
             return []
         
         try:
-            from src.prompts import TAG_SUGGESTION_PROMPT
+            # Get prompt from PromptManager or fallback to default
+            if self.prompt_manager:
+                prompt_template = self.prompt_manager.get_tag_suggestion_prompt()
+            else:
+                from src.prompts import TAG_SUGGESTION_PROMPT
+                prompt_template = TAG_SUGGESTION_PROMPT
             
             vault_tags = list(self.get_all_tags().keys())[:50]  # Top 50
             
-            prompt = TAG_SUGGESTION_PROMPT.format(
+            prompt = prompt_template.format(
                 existing_vault_tags=", ".join(vault_tags) if vault_tags else "None",
                 note_content=content[:2000],  # Limit content length
                 max_tags=max_tags
