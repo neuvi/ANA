@@ -137,3 +137,142 @@ class ProgressEvent(BaseModel):
     detail: str | None = Field(None, description="Additional detail")
     result: ProcessResponse | None = Field(None, description="Final result (for complete event)")
 
+
+# =============================================================================
+# Sync Models
+# =============================================================================
+
+class SyncRequest(BaseModel):
+    """Request to sync embeddings."""
+    force: bool = Field(False, description="Force re-sync all embeddings")
+    use_async: bool = Field(True, description="Use async parallel processing")
+
+
+class SyncResponse(BaseModel):
+    """Response from sync operation."""
+    updated: int = Field(0, description="Number of embeddings updated")
+    cached: int = Field(0, description="Number of cached embeddings")
+    failed: int = Field(0, description="Number of failed embeddings")
+    message: str | None = None
+
+
+class SyncStatsResponse(BaseModel):
+    """Response with embedding cache statistics."""
+    total_files: int = 0
+    total_embeddings: int = 0
+    embedding_dimension: int = 0
+    cache_size_human: str = "0 B"
+    embedding_model: str = ""
+    vector_db_enabled: bool = False
+
+
+# =============================================================================
+# Config Models
+# =============================================================================
+
+class ConfigResponse(BaseModel):
+    """Response with current configuration."""
+    llm_provider: str = ""
+    llm_model: str = ""
+    vault_path: str = ""
+    output_language: str = "ko"
+    embedding_model: str = ""
+    embedding_enabled: bool = True
+    rerank_enabled: bool = False
+    ollama_base_url: str = ""
+
+
+class ConfigSetRequest(BaseModel):
+    """Request to set a configuration value."""
+    value: str = Field(..., description="New value for the configuration key")
+
+
+class ConfigSetResponse(BaseModel):
+    """Response from setting a configuration value."""
+    success: bool
+    key: str
+    old_value: str | None = None
+    new_value: str | None = None
+    message: str | None = None
+
+
+# =============================================================================
+# Health/Doctor Models
+# =============================================================================
+
+class HealthCheck(BaseModel):
+    """A single health check result."""
+    name: str = Field(..., description="Check name")
+    status: str = Field(..., description="Status: ok, warning, error")
+    message: str = Field(..., description="Status message")
+    fix_hint: str | None = Field(None, description="Hint for fixing the issue")
+
+
+class HealthResponse(BaseModel):
+    """Response with health check results."""
+    status: str = Field("ok", description="Overall status: ok, warning, error")
+    version: str = "0.1.0"
+    checks: list[HealthCheck] = Field(default_factory=list)
+    summary: dict[str, int] = Field(
+        default_factory=lambda: {"ok": 0, "warning": 0, "error": 0}
+    )
+
+
+# =============================================================================
+# Prompts Models
+# =============================================================================
+
+class PromptInfo(BaseModel):
+    """Information about a single prompt."""
+    prompt_type: str = Field(..., description="Prompt type")
+    source: str = Field(..., description="Source: default or custom")
+    path: str | None = Field(None, description="Path if custom prompt")
+    is_valid: bool = True
+    validation_message: str | None = None
+
+
+class PromptsInfoResponse(BaseModel):
+    """Response with prompts configuration info."""
+    prompts: list[PromptInfo] = Field(default_factory=list)
+    custom_prompts_dir: str | None = None
+
+
+class PromptsValidateResponse(BaseModel):
+    """Response from validating prompts."""
+    all_valid: bool = True
+    results: list[PromptInfo] = Field(default_factory=list)
+
+
+# =============================================================================
+# Backlink Models
+# =============================================================================
+
+class BacklinkSuggestRequest(BaseModel):
+    """Request to suggest backlinks for a note."""
+    title: str = Field(..., description="Note title")
+    content: str = Field(..., description="Note content")
+    tags: list[str] = Field(default_factory=list, description="Note tags")
+    max_notes_to_scan: int = Field(50, ge=1, le=200, description="Max notes to scan")
+
+
+class BacklinkSuggestionItem(BaseModel):
+    """A single backlink suggestion."""
+    source_path: str = Field(..., description="Path to the source note")
+    source_title: str = Field(..., description="Title of the source note")
+    matched_text: str = Field(..., description="Matched text in source note")
+    line_number: int = Field(0, description="Line number of the match")
+    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Confidence score")
+    reason: str = Field("", description="Reason for suggestion")
+
+
+class BacklinkSuggestResponse(BaseModel):
+    """Response with backlink suggestions."""
+    suggestions: list[BacklinkSuggestionItem] = Field(default_factory=list)
+    notes_scanned: int = 0
+
+
+class BacklinkApplyRequest(BaseModel):
+    """Request to apply backlink suggestions."""
+    session_id: str = Field(..., description="Session ID")
+    suggestion_indices: list[int] = Field(..., description="Indices of suggestions to apply")
+

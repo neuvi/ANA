@@ -3,16 +3,17 @@
 FastAPI-based REST API server for Obsidian plugin integration.
 """
 
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
-from src.agent import AtomicNoteArchitect
 from fastapi.responses import StreamingResponse
 
+from src.agent import AtomicNoteArchitect
 from src.api.schemas import (
     AnswerRequest,
     AnalysisResult,
@@ -29,11 +30,28 @@ from src.api.schemas import (
     TagNormalizeResponse,
     VaultTagsResponse,
     TagSuggestion,
+    # New schemas
+    SyncRequest,
+    SyncResponse,
+    SyncStatsResponse,
+    ConfigResponse,
+    ConfigSetRequest,
+    ConfigSetResponse,
+    HealthCheck,
+    HealthResponse,
+    PromptInfo,
+    PromptsInfoResponse,
+    PromptsValidateResponse,
+    BacklinkSuggestRequest,
+    BacklinkSuggestionItem,
+    BacklinkSuggestResponse,
+    BacklinkApplyRequest,
 )
 from src.config import ANAConfig
 from src.progress import ProgressTracker, ProcessingPhase, SSEEventGenerator
 from src.smart_tags import SmartTagManager
 from src.vault_scanner import VaultScanner
+
 
 
 # Session storage for active processing sessions
@@ -426,6 +444,369 @@ async def process_note_stream(request: ProcessRequest):
             "X-Accel-Buffering": "no",
         }
     )
+
+
+# =============================================================================
+# Sync Routes
+# =============================================================================
+
+@api_router.post("/sync", response_model=SyncResponse)
+async def sync_embeddings(request: SyncRequest = SyncRequest()):
+    """Sync embeddings for all vault notes."""
+    try:
+        config = ANAConfig()
+        vault_path = config.get_vault_path()
+        
+        from src.embedding_cache import EmbeddingCache
+        
+        cache = EmbeddingCache(
+            vault_path=vault_path,
+            ollama_base_url=config.get_ollama_base_url(),
+            embedding_model=config.get_embedding_model(),
+        )
+        vault_scanner = VaultScanner(vault_path)
+        
+        # Clear cache if force is specified
+        if request.force:
+            cache.clear_cache()
+        
+        # Use async or sync method based on request
+        if request.use_async:
+            stats = await cache.sync_vault_async(vault_scanner)
+        else:
+            loop = asyncio.get_event_loop()
+            stats = await loop.run_in_executor(
+                None,
+                lambda: cache.sync_vault(vault_scanner)
+            )
+        
+        return SyncResponse(
+            updated=stats.get("updated", 0),
+            cached=stats.get("cached", 0),
+            failed=stats.get("failed", 0),
+            message="Sync completed successfully"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/sync/stats", response_model=SyncStatsResponse)
+async def get_sync_stats():
+    """Get embedding cache statistics."""
+    try:
+        config = ANAConfig()
+        vault_path = config.get_vault_path()
+        
+        from src.embedding_cache import EmbeddingCache
+        
+        cache = EmbeddingCache(
+            vault_path=vault_path,
+            ollama_base_url=config.get_ollama_base_url(),
+            embedding_model=config.get_embedding_model(),
+        )
+        
+        stats = cache.get_stats()
+        
+        return SyncStatsResponse(
+            total_files=stats.get("total_files", 0),
+            total_embeddings=stats.get("total_embeddings", 0),
+            embedding_dimension=stats.get("embedding_dimension", 0),
+            cache_size_human=stats.get("cache_size_human", "0 B"),
+            embedding_model=stats.get("embedding_model", ""),
+            vector_db_enabled=stats.get("vector_db_enabled", False),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Config Routes
+# =============================================================================
+
+@api_router.get("/config", response_model=ConfigResponse)
+async def get_config():
+    """Get current configuration."""
+    try:
+        config = ANAConfig()
+        
+        return ConfigResponse(
+            llm_provider=config.get_llm_provider(),
+            llm_model=config.get_llm_model(),
+            vault_path=str(config.get_vault_path()),
+            output_language=config.get_output_language(),
+            embedding_model=config.get_embedding_model(),
+            embedding_enabled=config.get_embedding_enabled(),
+            rerank_enabled=config.get_rerank_enabled(),
+            ollama_base_url=config.get_ollama_base_url(),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.put("/config/{key}", response_model=ConfigSetResponse)
+async def set_config(key: str, request: ConfigSetRequest):
+    """Set a configuration value."""
+    try:
+        from src.cli.config_wizard import set_config_value
+        
+        # Get old value for response
+        config = ANAConfig()
+        old_value = None
+        try:
+            getter = getattr(config, f"get_{key}", None)
+            if getter:
+                old_value = str(getter())
+        except Exception:
+            pass
+        
+        # Set new value
+        set_config_value(key, request.value)
+        
+        return ConfigSetResponse(
+            success=True,
+            key=key,
+            old_value=old_value,
+            new_value=request.value,
+            message=f"Configuration '{key}' updated successfully"
+        )
+    except Exception as e:
+        return ConfigSetResponse(
+            success=False,
+            key=key,
+            message=str(e)
+        )
+
+
+# =============================================================================
+# Health/Doctor Routes
+# =============================================================================
+
+@api_router.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Comprehensive health check."""
+    try:
+        from src.cli.doctor import (
+            check_python_version,
+            check_env_file,
+            check_vault_path,
+            check_llm_provider,
+            check_ollama,
+            check_embedding_model,
+        )
+        
+        checks = []
+        summary = {"ok": 0, "warning": 0, "error": 0}
+        
+        # Run all diagnostic checks
+        check_functions = [
+            check_python_version,
+            check_env_file,
+            check_vault_path,
+            check_llm_provider,
+            check_ollama,
+            check_embedding_model,
+        ]
+        
+        for check_fn in check_functions:
+            try:
+                result = check_fn()
+                checks.append(HealthCheck(
+                    name=result.name,
+                    status=result.status,
+                    message=result.message,
+                    fix_hint=result.fix_hint,
+                ))
+                summary[result.status] = summary.get(result.status, 0) + 1
+            except Exception as e:
+                checks.append(HealthCheck(
+                    name=check_fn.__name__,
+                    status="error",
+                    message=str(e),
+                ))
+                summary["error"] += 1
+        
+        # Determine overall status
+        overall_status = "ok"
+        if summary["error"] > 0:
+            overall_status = "error"
+        elif summary["warning"] > 0:
+            overall_status = "warning"
+        
+        return HealthResponse(
+            status=overall_status,
+            version="0.1.0",
+            checks=checks,
+            summary=summary,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Prompts Routes
+# =============================================================================
+
+@api_router.get("/prompts", response_model=PromptsInfoResponse)
+async def get_prompts_info():
+    """Get prompt configuration info."""
+    try:
+        from src.prompt_manager import PromptManager
+        
+        config = ANAConfig()
+        pm = PromptManager(config)
+        
+        info = pm.get_prompt_info()
+        prompts = []
+        
+        for prompt_type, details in info.items():
+            prompts.append(PromptInfo(
+                prompt_type=prompt_type,
+                source=details.get("source", "default"),
+                path=details.get("path"),
+                is_valid=True,
+            ))
+        
+        custom_dir = config.get_custom_prompts_dir()
+        
+        return PromptsInfoResponse(
+            prompts=prompts,
+            custom_prompts_dir=str(custom_dir) if custom_dir else None,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/prompts/validate", response_model=PromptsValidateResponse)
+async def validate_prompts():
+    """Validate custom prompt files."""
+    try:
+        from src.prompt_manager import PromptManager
+        
+        config = ANAConfig()
+        pm = PromptManager(config)
+        
+        validation_results = pm.validate_all_prompts()
+        results = []
+        all_valid = True
+        
+        for prompt_type, (is_valid, message) in validation_results.items():
+            info = pm.get_prompt_info().get(prompt_type, {})
+            results.append(PromptInfo(
+                prompt_type=prompt_type,
+                source=info.get("source", "default"),
+                path=info.get("path"),
+                is_valid=is_valid,
+                validation_message=message if not is_valid else None,
+            ))
+            if not is_valid:
+                all_valid = False
+        
+        return PromptsValidateResponse(
+            all_valid=all_valid,
+            results=results,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Backlink Routes
+# =============================================================================
+
+# Store backlink suggestions per session
+_backlink_sessions: dict[str, list] = {}
+
+
+@api_router.post("/backlinks/suggest", response_model=BacklinkSuggestResponse)
+async def suggest_backlinks(request: BacklinkSuggestRequest):
+    """Suggest backlinks for a note."""
+    try:
+        from src.backlink_analyzer import BacklinkAnalyzer
+        from src.schemas import DraftNote as SchemaDraftNote
+        from src.llm_config import get_llm
+        
+        config = ANAConfig()
+        vault_path = config.get_vault_path()
+        vault_scanner = VaultScanner(vault_path)
+        llm = get_llm(config)
+        
+        analyzer = BacklinkAnalyzer(
+            vault_scanner=vault_scanner,
+            llm=llm,
+            auto_apply=False,
+        )
+        
+        # Create a DraftNote from the request
+        draft_note = SchemaDraftNote(
+            title=request.title,
+            content=request.content,
+            frontmatter={"tags": request.tags} if request.tags else {},
+        )
+        
+        # Find backlink opportunities
+        suggestions = analyzer.find_backlink_opportunities(
+            new_note=draft_note,
+            max_notes_to_scan=request.max_notes_to_scan,
+        )
+        
+        # Store suggestions in session for later application
+        session_id = str(uuid.uuid4())
+        _backlink_sessions[session_id] = {
+            "suggestions": suggestions,
+            "analyzer": analyzer,
+        }
+        
+        # Convert to response format
+        response_suggestions = []
+        for s in suggestions:
+            response_suggestions.append(BacklinkSuggestionItem(
+                source_path=s.source_path,
+                source_title=getattr(s, "source_title", Path(s.source_path).stem),
+                matched_text=s.matched_text,
+                line_number=s.line_number,
+                confidence=s.confidence,
+                reason=s.reason,
+            ))
+        
+        return BacklinkSuggestResponse(
+            suggestions=response_suggestions,
+            notes_scanned=request.max_notes_to_scan,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/backlinks/apply")
+async def apply_backlinks(request: BacklinkApplyRequest):
+    """Apply backlink suggestions."""
+    session = _backlink_sessions.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Backlink session not found")
+    
+    try:
+        analyzer = session["analyzer"]
+        all_suggestions = session["suggestions"]
+        
+        # Filter to selected suggestions
+        selected = [
+            all_suggestions[i] 
+            for i in request.suggestion_indices 
+            if i < len(all_suggestions)
+        ]
+        
+        # Apply backlinks
+        modified_files = analyzer.apply_backlinks(selected)
+        
+        # Clean up session
+        del _backlink_sessions[request.session_id]
+        
+        return {
+            "success": True,
+            "applied_count": len(selected),
+            "modified_files": [str(f) for f in modified_files],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================
