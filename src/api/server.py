@@ -70,6 +70,10 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    from pathlib import Path
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+    
     app = FastAPI(
         title="ANA API",
         description="Atomic Note Architect REST API for Obsidian plugin",
@@ -86,8 +90,22 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    # Register routes
+    # Register API routes
     app.include_router(api_router)
+    
+    # Serve WebUI static files
+    webui_path = Path(__file__).parent.parent / "webui" / "static"
+    if webui_path.exists():
+        app.mount("/webui/static", StaticFiles(directory=str(webui_path)), name="webui-static")
+        
+        @app.get("/webui")
+        @app.get("/webui/")
+        async def serve_webui():
+            """Serve the WebUI main page."""
+            index_path = webui_path / "index.html"
+            if index_path.exists():
+                return FileResponse(str(index_path))
+            return {"error": "WebUI not found"}
     
     return app
 

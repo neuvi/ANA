@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ANA Note - AI 기반 마크다운 노트 테이킹 앱">
+  <title>ANA Note - AI Markdown Editor</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+
+  <!-- Highlight.js for code syntax highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css"
+    media="(prefers-color-scheme: light)" id="hljs-light">
+
+  <!-- Main Stylesheet -->
+  <link rel="stylesheet" href="/webui/static/css/index.css">
+</head>
+
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo">
+          <span class="logo-icon">🧠</span>
+          <span>ANA Note</span>
+        </div>
+        <input type="text" class="note-title-input" id="note-title" placeholder="제목 없는 노트" aria-label="노트 제목">
+      </div>
+      <div class="header-right">
+        <button class="btn btn-ghost btn-icon" id="btn-new" title="새 노트 (Ctrl+N)">
+          ➕
+        </button>
+        <button class="btn btn-secondary" id="btn-analyze" title="AI 분석">
+          <span>🤖</span>
+          <span>분석</span>
+        </button>
+        <button class="btn btn-primary" id="btn-save">
+          <span>💾</span>
+          <span>저장</span>
+        </button>
+        <button class="theme-toggle" id="theme-toggle" title="테마 전환">
+          <span class="theme-toggle-slider">🌙</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Editor Panel -->
+      <section class="editor-container">
+        <div class="panel-header">
+          <span class="panel-title">
+            <span class="panel-title-icon">✏️</span>
+            Editor
+          </span>
+          <span class="status-item" id="line-info">
+            Line 1, Col 1
+          </span>
+        </div>
+        <div class="editor">
+          <textarea class="editor-textarea" id="editor" placeholder="마크다운으로 노트를 작성하세요...
+
+# 제목
+## 소제목
+
+**굵게** 또는 *기울임*으로 텍스트를 꾸밀 수 있습니다.
+
+- 목록 아이템 1
+- 목록 아이템 2
+
+> 인용문도 지원됩니다.
+
+\`\`\`javascript
+// 코드 블록
+const hello = 'world';
+\`\`\`
+" aria-label="마크다운 에디터" spellcheck="false"></textarea>
+        </div>
+      </section>
+
+      <!-- Preview Panel -->
+      <section class="preview-container">
+        <div class="panel-header">
+          <span class="panel-title">
+            <span class="panel-title-icon">👁️</span>
+            Preview
+          </span>
+          <button class="btn btn-ghost btn-icon" id="btn-toggle-ana" title="ANA 패널 토글">
+            🤖
+          </button>
+        </div>
+        <div class="preview" id="preview">
+          <div class="preview-content" id="preview-content">
+            <div class="empty-state">
+              <div class="empty-state-icon">📄</div>
+              <div class="empty-state-title">미리보기</div>
+              <div class="empty-state-description">
+                왼쪽 에디터에 마크다운을 입력하면 여기에 실시간으로 렌더링됩니다.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ANA Panel -->
+      <aside class="ana-panel" id="ana-panel">
+        <div class="panel-header">
+          <span class="panel-title">
+            <span class="panel-title-icon">🤖</span>
+            ANA 분석
+          </span>
+          <button class="btn btn-ghost btn-icon" id="btn-close-ana" title="패널 닫기">
+            ✕
+          </button>
+        </div>
+
+        <div class="ana-panel-content">
+          <!-- Connection Status -->
+          <div class="ana-section">
+            <div class="ana-section-header">
+              <span class="ana-section-icon">🔌</span>
+              연결 상태
+            </div>
+            <div class="ana-status" id="ana-status">
+              <span class="status-indicator" id="ana-indicator"></span>
+              <span id="ana-status-text">확인 중...</span>
+            </div>
+          </div>
+
+          <!-- Analysis Result -->
+          <div class="ana-section" id="analysis-section">
+            <div class="ana-section-header">
+              <span class="ana-section-icon">📊</span>
+              분석 결과
+            </div>
+            <div class="ana-analysis" id="ana-analysis">
+              <div class="empty-state-mini">
+                "분석" 버튼을 클릭하여<br>AI 분석을 시작하세요
+              </div>
+            </div>
+          </div>
+
+          <!-- Tag Suggestions -->
+          <div class="ana-section" id="tags-section">
+            <div class="ana-section-header">
+              <span class="ana-section-icon">🏷️</span>
+              추천 태그
+              <button class="btn btn-ghost btn-sm" id="btn-refresh-tags" title="태그 새로고침">
+                🔄
+              </button>
+            </div>
+            <div class="ana-tags" id="ana-tags">
+              <div class="empty-state-mini">태그 추천을 받으려면<br>노트를 작성하세요</div>
+            </div>
+          </div>
+
+          <!-- Backlink Suggestions -->
+          <div class="ana-section" id="backlinks-section">
+            <div class="ana-section-header">
+              <span class="ana-section-icon">🔗</span>
+              관련 노트
+              <button class="btn btn-ghost btn-sm" id="btn-refresh-backlinks" title="백링크 새로고침">
+                🔄
+              </button>
+            </div>
+            <div class="ana-backlinks" id="ana-backlinks">
+              <div class="empty-state-mini">연결할 수 있는<br>관련 노트가 없습니다</div>
+            </div>
+          </div>
+
+          <!-- Questions from ANA -->
+          <div class="ana-section hidden" id="questions-section">
+            <div class="ana-section-header">
+              <span class="ana-section-icon">❓</span>
+              ANA 질문
+            </div>
+            <div class="ana-questions" id="ana-questions"></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Status Bar -->
+    <footer class="status-bar">
+      <div class="status-left">
+        <span class="status-item">
+          <span class="status-indicator" id="save-indicator"></span>
+          <span id="save-status">저장됨</span>
+        </span>
+        <span class="status-item" id="word-count">0 단어</span>
+        <span class="status-item" id="char-count">0 글자</span>
+      </div>
+      <div class="status-right">
+        <span class="status-item" id="ana-connection-status">ANA: 연결 중...</span>
+        <span class="status-item">Markdown</span>
+        <span class="status-item">UTF-8</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- External Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <!-- App Scripts -->
+  <script src="/webui/static/js/markdown.js"></script>
+  <script src="/webui/static/js/ana-api.js"></script>
+  <script src="/webui/static/js/app.js"></script>
+</body>
+
+</html>
